@@ -9,6 +9,8 @@ healthRouter.get('/', (_req: Request, res: Response) => {
     service: 'mentora-ai-api',
     timestamp: new Date().toISOString(),
     environment: serverConfig.nodeEnv,
-    groqConfigured: serverConfig.isGroqConfigured,
+    geminiConfigured: serverConfig.isGeminiConfigured,
+    supabaseConfigured: serverConfig.isSupabaseConfigured,
+    aiModel: 'gemini-2.5-flash',
   })
 })

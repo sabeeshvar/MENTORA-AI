@@ -63,6 +63,8 @@ export interface QuizAttempt {
   timeSpentSeconds: number
   completedAt: string
   results: QuestionAnswerResult[]
+  score?: number
+  isDiagnostic?: boolean
 }
 
 export interface Quiz {
@@ -74,4 +76,5 @@ export interface Quiz {
   difficulty: QuizDifficulty
   questions: QuizQuestion[]
   createdAt: string
+  isDiagnostic?: boolean
 }

@@ -7,7 +7,7 @@ import {
 import {
   getMaterialChunks,
   updateMaterialProcessingStatus,
-} from '../src/lib/firebase/firestore'
+} from '../src/lib/supabase/db'
 import type { CourseMaterial } from '../src/types/course'
 
 // Polyfill minimal localStorage for Node.js test environment if absent

@@ -1,20 +1,7 @@
 import type { ProcessedChunk } from '@/types/chunk'
+import type { SourceCitation, TutorResponse } from '@/types/tutor'
 
-export interface SourceCitation {
-  materialName: string
-  pageNumber?: number | null
-  slideNumber?: number | null
-  relevantText: string
-}
-
-export interface TutorResponse {
-  answer: string
-  sources: SourceCitation[]
-  confidence: number
-  grounded: boolean
-  retrievedChunksCount?: number
-  retrievedChunks?: any[]
-}
+export type { SourceCitation, TutorResponse }
 
 export interface AskTutorClientParams {
   courseId: string
@@ -22,31 +9,32 @@ export interface AskTutorClientParams {
   courseTitle?: string
   chunks?: ProcessedChunk[]
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>
+  preferredLanguage?: string
   topK?: number
 }
 
-const API_BASE = '/api/groq'
+const API_BASE = '/api/ai'
 
 /**
- * Checks server-side Groq API key configuration
+ * Checks server-side Gemini AI engine configuration
  */
-export const checkGroqStatus = async (): Promise<{ configured: boolean; model: string }> => {
+export const checkAIStatus = async (): Promise<{ configured: boolean; model: string; provider?: string }> => {
   try {
     const res = await fetch(`${API_BASE}/status`)
     if (!res.ok) {
-      return { configured: false, model: 'llama-3.3-70b-versatile' }
+      return { configured: false, model: 'gemini-2.5-flash', provider: 'Google Gemini' }
     }
     return await res.json()
   } catch (err) {
-    console.warn('Could not contact Groq status endpoint:', err)
-    return { configured: false, model: 'llama-3.3-70b-versatile' }
+    console.warn('Could not contact AI status endpoint:', err)
+    return { configured: false, model: 'gemini-2.5-flash', provider: 'Google Gemini' }
   }
 }
 
 /**
- * Sends student question + course chunks to backend RAG pipeline
+ * Sends student question + course chunks to backend Gemini RAG pipeline
  */
-export const askGroqTutor = async (params: AskTutorClientParams): Promise<TutorResponse> => {
+export const askAITutor = async (params: AskTutorClientParams): Promise<TutorResponse> => {
   const res = await fetch(`${API_BASE}/tutor`, {
     method: 'POST',
     headers: {

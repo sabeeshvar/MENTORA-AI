@@ -6,7 +6,7 @@ import type {
 } from '@/types/quiz'
 import type { ProcessedChunk } from '@/types/chunk'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api'
+const API_BASE_URL = '/api/ai'
 
 export interface GenerateQuizApiParams {
   courseId: string
@@ -15,6 +15,7 @@ export interface GenerateQuizApiParams {
   numberOfQuestions?: number
   questionTypes?: QuestionType[]
   chunks?: ProcessedChunk[]
+  preferredLanguage?: string
 }
 
 export interface GeneratedQuizApiResponse {
@@ -28,12 +29,12 @@ export interface GeneratedQuizApiResponse {
 }
 
 /**
- * Calls backend Groq AI service to generate questions grounded strictly in course chunks
+ * Calls backend Gemini AI service to generate questions grounded strictly in course chunks
  */
 export const generateGroundedQuizApi = async (
   params: GenerateQuizApiParams
 ): Promise<GeneratedQuizApiResponse> => {
-  const res = await fetch(`${API_BASE_URL}/groq/quiz/generate`, {
+  const res = await fetch(`${API_BASE_URL}/quiz/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
@@ -52,12 +53,13 @@ export const generateGroundedQuizApi = async (
  */
 export const evaluateQuizAnswerApi = async (
   question: QuizQuestion,
-  studentAnswer: string
+  studentAnswer: string,
+  preferredLanguage: string = 'en'
 ): Promise<QuestionAnswerResult> => {
-  const res = await fetch(`${API_BASE_URL}/groq/quiz/evaluate`, {
+  const res = await fetch(`${API_BASE_URL}/quiz/evaluate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, studentAnswer }),
+    body: JSON.stringify({ question, studentAnswer, preferredLanguage }),
   })
 
   if (!res.ok) {
@@ -78,7 +80,7 @@ export const requestRemedyActionApi = async (params: {
   correctConcept: string
   sourceContext?: string
 }): Promise<string> => {
-  const res = await fetch(`${API_BASE_URL}/groq/quiz/remedy`, {
+  const res = await fetch(`${API_BASE_URL}/quiz/remedy`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
@@ -90,5 +92,5 @@ export const requestRemedyActionApi = async (params: {
   }
 
   const data = await res.json()
-  return data.text
+  return data.text || 'Explanation processed.'
 }

@@ -171,8 +171,8 @@ export const LandingPage: React.FC = () => {
             Engineered for Deep Academic Mastery
           </h2>
           <p className="text-sm text-slate-400">
-            Every feature connects to real Firebase data, dense semantic vector retrieval, and live
-            Groq LLaMA 3.3 inference.
+            Every feature connects to real Supabase PostgreSQL data, dense semantic vector retrieval, and live
+            Google Gemini 2.5 Flash inference.
           </p>
         </div>
 
@@ -249,7 +249,7 @@ export const LandingPage: React.FC = () => {
             <h3 className="text-base font-bold text-white">Learning Analytics</h3>
             <p className="text-xs text-slate-400 leading-relaxed">
               Real-time charts tracking accuracy trends, quiz history, weak-spot diagnosis, and streak
-              consistency computed directly from live Firestore records.
+              consistency computed directly from live Supabase records.
             </p>
           </div>
         </div>
@@ -258,8 +258,8 @@ export const LandingPage: React.FC = () => {
       {/* Footer */}
       <footer className="border-t border-slate-800/80 py-8 text-center text-xs text-slate-500 mt-auto">
         <p>
-          MENTORA AI &bull; Learn. Adapt. Master. &bull; Production Hackathon Release &bull; Powered
-          by Groq LLaMA 3.3 & Firebase
+          MENTORA AI &bull; Learn. Adapt. Master. &bull; Production Track D Release &bull; Powered
+          by Google Gemini & Supabase
         </p>
       </footer>
     </div>

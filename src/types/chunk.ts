@@ -19,6 +19,14 @@ export interface ProcessedChunk {
   embedding?: number[]
   embeddingModel?: string
   similarityScore?: number
+  content?: string
+  materialName?: string
+  materialType?: CourseMaterialType
+  videoTimestamp?: string | null
+  tokenCount?: number
+  topicId?: string
+  conceptId?: string
+  diagramDescription?: string
 }
 
 export interface MaterialExtractionSummary {

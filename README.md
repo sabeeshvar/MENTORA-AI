@@ -1,7 +1,8 @@
-# MENTORA AI — A Multimodal, Source-Grounded & Adaptive AI Learning Companion
+# MENTORA AI — Multimodal, Source-Grounded & Adaptive AI Learning Companion
 
 > **Tagline:** Learn. Adapt. Master.  
-> **Hackathon Track:** Personalized Tutoring & Adaptive Learning  
+> **Hackathon Track:** Multimodal AI Hackathon 2026 — Track D: Personalized Tutoring & Adaptive Learning  
+> **Architecture:** Google Gemini 2.5 Flash + Supabase (PostgreSQL, Row Level Security, pgvector, Auth, Storage)  
 > **Repository:** [https://github.com/sabeeshvar/MENTORA-AI.git](https://github.com/sabeeshvar/MENTORA-AI.git)
 
 ---
@@ -9,20 +10,22 @@
 ## 1. Project Overview & Problem Statement
 Modern students often struggle with passive, fragmented study tools that fail to personalize explanations, hallucinate facts, or lack connection to actual course syllabi. When students ask questions to standard generic chatbots, answers are ungrounded, lack exact textbook page citations, and cannot adapt to individual learner mastery.
 
-**MENTORA AI** solves this by turning raw course learning materials (PDF textbooks, PPT/PPTX slides, and lecture video transcripts) into a source-grounded, adaptive learning companion. Every answer is bound strictly to course context with verified page numbers, slide indices, and video timestamps. Real-time quiz evaluations continuously update topic-level mastery in Firebase Firestore and prescribe data-driven personalized recommendations.
+**MENTORA AI** solves this by turning raw course learning materials (PDF textbooks, PPT/PPTX slide decks, diagrams, and lecture video transcripts) into a source-grounded, adaptive learning companion. Every answer is bound strictly to course context with verified page numbers, slide indices, diagram labels, and video timestamps. Real-time quiz evaluations continuously update topic-level mastery in Supabase PostgreSQL and prescribe data-driven personalized recommendations, personalized study plans, and spaced repetition revision.
 
 ---
 
 ## 2. Core Solution & Features
-- **Multimodal Learning Material Processing:** Ingestion pipeline preserving page numbers, slide indices, and video timestamps.
-- **Source-Grounded AI Tutor:** Bounded RAG inference using Groq LLaMA 3.3 70B with visible `GROUNDED` or `INSUFFICIENT COURSE EVIDENCE` status.
-- **Adaptive Quiz Generation:** Generates MCQ, Short Answer, and Numerical questions directly supported by retrieved course chunks.
-- **Pedagogical Wrong Answer Remedies:** Immediate 6-point breakdown (correct concept, why incorrect, simple explanation, concrete example, source citation, follow-up question) and interactive buttons (*Explain Simply*, *Give an Example*, *Ask Me a Follow-up*).
-- **Mastery Engine:** Dampened exponential scoring tracking topic-level mastery across *Needs Attention* (0–39%), *Developing* (40–69%), *Good* (70–84%), and *Mastered* (85–100%).
-- **Interactive Course Knowledge Map:** Hierarchical tree (`Course -> Module -> Topic -> Subtopic -> Concept`) with node inspection and direct adaptive study actions.
-- **Personalized Recommendations:** Data-driven study prescriptions (*REVISION*, *QUIZ*, *READ*, *PRACTICE*, *ADVANCE*) with actual learner diagnostics.
-- **Real Progress Analytics:** Un-fabricated live Firebase metrics for mastery curves, quiz accuracy, and activity streaks.
-- **Hackathon Demo Mode:** Clearly labelled toggle preloaded with demo course data for judges to test the complete 3–5 minute loop instantly.
+
+- **Multimodal Material Ingestion:** Ingests PDF textbooks, PowerPoint slide decks (PPT/PPTX), diagrams, and lecture video transcripts, preserving exact page numbers, slide numbers, and video timestamps.
+- **Source-Grounded AI Tutor:** Bounded RAG inference using **Google Gemini 2.5 Flash** with visible `GROUNDED` or `INSUFFICIENT COURSE EVIDENCE` status.
+- **Adaptive Quiz Engine:** Generates MCQ, Short Answer, and Numerical questions directly supported by retrieved course chunks with diagnostic assessment modes.
+- **Misconception Analysis & Pedagogical Wrong-Answer Remedies:** Immediate 6-point pedagogical breakdown (correct concept, why incorrect, simple explanation, concrete example, source citation, follow-up question) and interactive buttons (*Explain Simply*, *Give an Example*, *Ask Me a Follow-up*).
+- **Topic Mastery Model:** Dampened exponential scoring tracking topic-level mastery across *Needs Attention* (0–39%), *Developing* (40–69%), *Good* (70–84%), and *Mastered* (85–100%).
+- **Personalized Study Plan Engine:** 6-step personalized schedule generation factoring in target exam dates, available daily study minutes, preferred days, weak topics, and mastery curves.
+- **Spaced Repetition Revision Engine:** Leitner-style spaced repetition tracking 4 distinct topic status buckets (*Due Today*, *Overdue*, *Upcoming*, *Mastered*) with interactive guided revision sessions and targeted diagnostic recaps.
+- **Multilingual Learning Experience:** Native learning support across 8 languages (**English, Tamil, Hindi, Telugu, Malayalam, Kannada, Bengali, Marathi**) for the AI tutor, quizzes, study plans, revision, and recommendations while strictly preserving canonical source metadata.
+- **Interactive Course Knowledge Map:** Hierarchical tree (`Course -> Module -> Topic -> Concept`) with node inspection and direct adaptive study actions.
+- **Empirical Evaluation & Benchmarking:** Built-in evaluation dashboard benchmarking groundedness, citation accuracy, answer relevance, and misconception detection across simulated learners (Novice, Developing, Advanced).
 
 ---
 
@@ -30,147 +33,120 @@ Modern students often struggle with passive, fragmented study tools that fail to
 
 ```mermaid
 graph TD
-    Client["React 19 + TypeScript + Vite Frontend"] --> Auth["Firebase Authentication"]
-    Client --> Storage["Firebase Storage (PDF/PPTX/Video)"]
-    Client --> Firestore["Firebase Firestore (Real DB)"]
+    Client["React 19 + TypeScript + Vite Frontend"] --> SupaAuth["Supabase Auth (JWT & OAuth)"]
+    Client --> SupaStorage["Supabase Storage (course-materials bucket)"]
+    Client --> SupaDB["Supabase PostgreSQL (RLS & pgvector)"]
     Client --> Backend["Node.js / Express API Server"]
-    Backend --> Retrieval["Dense Semantic Vector Retrieval"]
-    Backend --> GroqAI["Groq AI Engine (LLaMA 3.3 70B Versatile)"]
-    Firestore --> Mastery["Mastery & Recommendation Engine"]
+    Backend --> Retrieval["pgvector Dense Semantic Retrieval"]
+    Backend --> GeminiAI["Google Gemini 2.5 Flash API"]
+    SupaDB --> Mastery["Mastery & Recommendation Engine"]
 ```
 
 ---
 
-## 4. Multimodal Document Processing Pipeline
+## 4. Supabase Relational Database Schema
 
-```mermaid
-flowchart LR
-    A[Upload Material] --> B[Validate Format & Size]
-    B --> C[Extract Text & Metadata]
-    C --> D[Preserve Page/Slide/Timestamp]
-    D --> E[Chunk & Structure Content]
-    E --> F[Generate Dense Embeddings]
-    F --> G[Index in Course Vector Store]
-    G --> H[Ready for Grounded AI]
-```
+The database is built on PostgreSQL with UUID primary keys, foreign keys, timestamps, indexes, and Row Level Security (RLS) enabled on all user-owned tables.
 
----
-
-## 5. Retrieval-Augmented Generation (RAG) Architecture
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Student
-    participant UI as MENTORA Frontend
-    participant Server as Backend API (/api/groq/tutor)
-    participant Store as Vector Store (courseId partitioned)
-    participant Groq as Groq LLaMA 3.3 70B
-
-    Student->>UI: Ask Question
-    UI->>Server: Query + CourseId
-    Server->>Store: Dense Vector Search (top-K chunks)
-    Store-->>Server: Top Ranked Relevant Chunks
-    alt Evidence Found
-        Server->>Groq: Strict Grounded Prompt + Retrieved Context
-        Groq-->>Server: Answer + Source Citations + Confidence
-        Server-->>UI: Grounded Answer + Citations
-        UI-->>Student: Display [GROUNDED] + Page/Slide Citations
-    else Insufficient Evidence
-        Server-->>UI: Insufficient Course Evidence Message
-        UI-->>Student: Display [INSUFFICIENT COURSE EVIDENCE]
-    end
-```
+- `profiles`: User account details, display name, role, learning stats, preferred language.
+- `courses`: Course definitions, subjects, owner ID, and material counters.
+- `course_materials`: Metadata for uploaded PDFs, PPTXs, and videos referencing Supabase Storage paths.
+- `course_chunks`: Semantic multimodal chunks with `page_number`, `slide_number`, `video_timestamp`, `diagram_description`, and `pgvector` embeddings.
+- `course_topics`: Extracted syllabus topics and concept hierarchies.
+- `quizzes`: Generated grounded quiz definitions and questions.
+- `quiz_attempts`: Detailed quiz attempt records, question-level scores, accuracy, and diagnostic flags.
+- `mastery`: Per-topic learner mastery scores (0.0 to 1.0), attempt counts, trend, and difficulty.
+- `study_plans`: Personalized multi-day study schedules generated for target dates.
+- `study_plan_tasks`: Daily milestone tasks linked to courses and topics.
+- `revision_items`: Spaced repetition revision intervals, review counts, next due dates, and weak areas.
+- `recommendations`: Adaptive data-driven learning prescriptions.
+- `evaluation_results`: Track D empirical evaluation benchmark metrics.
 
 ---
 
-## 6. Adaptive Learning Loop
-
-```mermaid
-graph TD
-    L[Learn Material] --> A[Ask Grounded Tutor]
-    A --> Q[Generate Adaptive Quiz]
-    Q --> E[Answer Evaluation]
-    E --> M[Update Topic Mastery]
-    M --> W[Diagnose Weak Topics]
-    W --> R[Personalized Recommendation]
-    R --> L
-```
-
----
-
-## 7. Firebase Firestore Schema
-
-- `users/{uid}`: Profile, authentication identity, streak, and aggregate stats.
-- `courses/{courseId}`: Course title, subject, ownerId, metadata.
-- `courses/{courseId}/materials/{materialId}`: Uploaded file records and status.
-- `courses/{courseId}/materials/{materialId}/chunks/{chunkId}`: Knowledge chunks with `pageNumber`, `slideNumber`, `startTimestamp`, `endTimestamp`.
-- `users/{uid}/mastery/{topicId}`: Topic mastery score (0.0 to 1.0), attempts, errors, trend, difficulty level.
-- `users/{uid}/quizAttempts/{attemptId}`: Completed quiz score, accuracy %, timestamp, detailed results.
-- `users/{uid}/recommendations/{recId}`: Active personalized learning recommendations.
-- `quizzes/{quizId}`: Generated grounded quiz definitions.
-
----
-
-## 8. Technology Stack
+## 5. Technology Stack
 
 - **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, React Router v7, Lucide React
 - **Backend:** Node.js, Express, TypeScript (`tsx`)
-- **AI Inference:** Groq SDK (`llama-3.3-70b-versatile`)
-- **Database & Auth:** Firebase Firestore, Firebase Authentication, Firebase Storage
-- **Security:** `firestore.rules`, `storage.rules`, Server-side Groq API key isolation
+- **AI Inference:** Google Gemini 2.5 Flash (`@google/genai`)
+- **Database & Auth:** Supabase PostgreSQL, Supabase Auth, Supabase Storage (`@supabase/supabase-js`)
+- **Vector Search:** PostgreSQL + `pgvector` dense vector indexing
+- **Security:** Supabase Row Level Security (RLS) policies, server-side secret isolation
 
 ---
 
-## 9. Local Development Setup
+## 6. Environment Variables Configuration
+
+Copy `.env.example` to `.env`:
+
+```bash
+cp .env.example .env
+```
+
+### Environment Variable Roles & Permissions
+
+| Variable Name | Safe for Frontend? | Server Only? | Description |
+|:---|:---:|:---:|:---|
+| `GEMINI_API_KEY` | ❌ **NO** | ✅ **YES** | Google Gemini API key. Never expose in client code. |
+| `VITE_SUPABASE_URL` | ✅ **YES** | — | Public Supabase project URL for the client. |
+| `VITE_SUPABASE_ANON_KEY` | ✅ **YES** | — | Public Supabase anonymous API key for the client. |
+| `SUPABASE_URL` | ❌ NO | ✅ **YES** | Backend connection URL to Supabase project. |
+| `SUPABASE_ANON_KEY` | ❌ NO | ✅ **YES** | Backend anon key for authenticated user proxying. |
+| `SUPABASE_SERVICE_ROLE_KEY` | ❌ **CRITICAL NO** | ✅ **YES** | Elevated service role key for trusted server operations. |
+| `VITE_API_BASE_URL` | ✅ **YES** | — | API base URL for client fetch requests (`/api`). |
+| `PORT` | ❌ NO | ✅ **YES** | Express server listen port (default: `5000`). |
+
+---
+
+## 7. Setup & Installation Guide
 
 ### Prerequisites
-- Node.js (v18+)
-- npm or yarn
-- Groq API Key ([console.groq.com](https://console.groq.com))
-- Firebase Project configuration
+- Node.js (v18 or higher)
+- npm (v9 or higher)
+- Google Cloud / Google AI Studio Account for Gemini API Key
+- Supabase Account for PostgreSQL, Auth, and Storage
 
-### 1. Clone Repository & Install Dependencies
+### Step 1: Obtain Google Gemini API Key
+1. Go to [Google AI Studio](https://aistudio.google.com/apikey).
+2. Click **Create API Key** and copy the generated key.
+3. Add it to your server `.env` as `GEMINI_API_KEY`.
+
+### Step 2: Set Up Supabase Project
+1. Create a project at [supabase.com](https://supabase.com).
+2. Go to **Project Settings -> API** and copy:
+   - **Project URL** -> `SUPABASE_URL` and `VITE_SUPABASE_URL`
+   - **anon public key** -> `SUPABASE_ANON_KEY` and `VITE_SUPABASE_ANON_KEY`
+   - **service_role key** -> `SUPABASE_SERVICE_ROLE_KEY` (Backend only)
+3. Navigate to **SQL Editor** in Supabase and run the migration script:
+   - File: `supabase/migrations/001_initial_schema.sql`
+   - This enables `pgvector`, creates all 13 relational tables, sets up foreign keys, and configures Row Level Security.
+4. Navigate to **Storage** in Supabase:
+   - Create a bucket named `course-materials`.
+   - Set visibility to public read or authenticated read according to your deployment policy.
+
+### Step 3: Install Dependencies
 ```bash
-git clone https://github.com/sabeeshvar/MENTORA-AI.git
-cd MENTORA-AI
 npm install
 ```
 
-### 2. Configure Environment Variables
-Create `.env` using `.env.example`:
-```env
-# Client - Firebase Web Configuration
-VITE_FIREBASE_API_KEY=your_firebase_api_key
-VITE_FIREBASE_AUTH_DOMAIN=your-app.firebaseapp.com
-VITE_FIREBASE_PROJECT_ID=your-project-id
-VITE_FIREBASE_STORAGE_BUCKET=your-app.appspot.com
-VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
-VITE_FIREBASE_APP_ID=your_app_id
-VITE_API_BASE_URL=http://localhost:5000/api
-
-# Backend Server Configuration
-PORT=5000
-NODE_ENV=development
-GROQ_API_KEY=gsk_your_groq_api_key_here
-```
-
-### 3. Run Development Servers
-Start backend API server:
+### Step 4: Run Development Servers
+Start the backend Express server:
 ```bash
 npm run server
 ```
 
-In a separate terminal, start frontend:
+In a separate terminal, start the Vite frontend development server:
 ```bash
 npm run dev
 ```
 
+Open `http://localhost:5173` in your browser.
+
 ---
 
-## 10. Automated Testing & Verification
+## 8. Automated Testing & Verification
 
-Run end-to-end pipeline test:
+Run the end-to-end pipeline test:
 ```bash
 npx tsx scripts/test-e2e-pipeline.ts
 ```
@@ -185,25 +161,30 @@ Run TypeScript compilation check:
 npm run lint
 ```
 
-Build production bundle:
+Run production build:
 ```bash
 npm run build
 ```
 
 ---
 
-## 11. Security & Prompt Injection Defense
-- **API Key Isolation:** Groq API keys remain strictly server-side.
-- **Context Separation:** System instructions, retrieved context, and student questions are partitioned in system/user message blocks.
-- **Course Isolation:** Retrieval queries are strictly scoped to the active `courseId`.
-- **Firebase Security Rules:** Defined in `firestore.rules` and `storage.rules` preventing unauthorized cross-user access.
+## 9. Security Architecture & Isolation
+
+- **Zero-Secret Client Bundles:** `GEMINI_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are read exclusively in Node.js server services. They are never imported or referenced in frontend components.
+- **Database Row Level Security:** Every query to user-owned data (`profiles`, `mastery`, `quiz_attempts`, `study_plans`, `revision_items`, `recommendations`) enforces `auth.uid() = user_id`.
+- **Course Isolation:** RAG chunk retrieval queries are strictly filtered by the authorized student's `course_id`.
+- **Prompt Injection Defense:** Model system prompts clearly isolate trusted course context from user query inputs, requiring strict citation matching and refusal when context is missing.
 
 ---
 
-## 12. 3–5 Minute Hackathon Demo Flow
-1. **Landing Page:** Review the 6 core pillars and click **Explore Demo**.
-2. **Dashboard:** Toggle **DEMO MODE [ON]** to inspect preloaded course *CS 452: Distributed Systems*.
-3. **Knowledge Map (`/knowledge-map`):** Inspect the hierarchy (*Course -> Module -> Topic -> Concept*), view source citations, and check topic mastery.
-4. **AI Tutor (`/tutor`):** Ask *"How does Raft leader election prevent split votes?"* and observe the verified `GROUNDED` response with page citations.
-5. **Adaptive Quiz (`/quiz`):** Click **Generate Adaptive Quiz** or take an existing quiz; answer questions and test the 6-point wrong-answer remediation with *"Explain Simply"*.
-6. **Mastery & Analytics (`/progress`):** Observe live mastery update and review personalized recommendations.
+## 10. 3–5 Minute Hackathon Demo Walkthrough
+
+1. **Dashboard & Language:** Open `/dashboard`. Choose your preferred Indian language (e.g., Tamil, Hindi, Telugu) from the language selector in the top bar.
+2. **Demo Mode:** Toggle **DEMO MODE [ON]** to inspect preloaded course *CS 452: Distributed Systems*.
+3. **Course Knowledge Map (`/knowledge-map`):** Inspect the hierarchical topic tree, view chunk citations, and examine topic mastery states.
+4. **AI Tutor (`/tutor`):** Ask *"How does Raft leader election prevent split votes?"* in your selected language and observe the verified `GROUNDED` response with exact page citations.
+5. **Study Plan (`/study-plan`):** Generate a 6-step personalized schedule targeting an upcoming exam date.
+6. **Spaced Repetition (`/revision`):** Review the 4 revision buckets and launch a guided revision session for weak topics.
+7. **Adaptive Quiz (`/quiz`):** Take a grounded quiz and test the 6-point wrong-answer remediation with *"Explain Simply"*.
+8. **Mastery Analytics (`/progress`):** Observe live mastery update across topics and review personalized recommendations.
+9. **Evaluation Benchmarks (`/evaluation`):** Inspect empirical RAGAS & TruLens evaluation metrics and simulated learner distributions.

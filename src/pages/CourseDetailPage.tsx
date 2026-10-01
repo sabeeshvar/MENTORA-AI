@@ -19,6 +19,8 @@ import {
   Clock,
   RefreshCw,
   Eye,
+  Pencil,
+  X,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { Card } from '@/components/common/Card'
@@ -29,8 +31,9 @@ import {
   getCourseMaterials,
   addCourseMaterial,
   deleteCourseMaterial,
-} from '@/lib/firebase/firestore'
-import { uploadCourseMaterialFile, isSupportedMaterialFile } from '@/lib/firebase/storage'
+  updateCourse,
+} from '@/lib/supabase/db'
+import { uploadCourseMaterialFile, isSupportedMaterialFile } from '@/lib/supabase/storage'
 import { processUploadedMaterial } from '@/services/extraction'
 import { ChunkViewerModal } from '@/components/materials/ChunkViewerModal'
 import type { Course, CourseMaterial, CourseMaterialType } from '@/types/course'
@@ -60,6 +63,53 @@ export const CourseDetailPage: React.FC = () => {
 
   // Deleting Material ID
   const [deletingMaterialId, setDeletingMaterialId] = useState<string | null>(null)
+
+  // Edit Course Modal States
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [editSubject, setEditSubject] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
+
+  const openEditModal = () => {
+    if (!course) return
+    setEditTitle(course.title)
+    setEditSubject(course.subject)
+    setEditDescription(course.description || '')
+    setEditError(null)
+    setIsEditModalOpen(true)
+  }
+
+  const handleSaveCourseEdit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!course || !user || !courseId) return
+    if (!editTitle.trim()) {
+      setEditError('Please enter a course title.')
+      return
+    }
+    if (!editSubject.trim()) {
+      setEditError('Please enter a subject.')
+      return
+    }
+
+    setIsSavingEdit(true)
+    setEditError(null)
+    try {
+      const updated = await updateCourse(courseId, user.uid, {
+        title: editTitle.trim(),
+        subject: editSubject.trim(),
+        description: editDescription.trim(),
+      })
+      setCourse(updated)
+      setIsEditModalOpen(false)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to update course'
+      setEditError(msg)
+    } finally {
+      setIsSavingEdit(false)
+    }
+  }
 
   // Load Course and Materials
   const loadCourseData = async () => {
@@ -162,9 +212,10 @@ export const CourseDetailPage: React.FC = () => {
     const file = files[0]
     setUploadError(null)
 
-    if (!isSupportedMaterialFile(file.name)) {
+    const check = isSupportedMaterialFile(file)
+    if (!check.valid) {
       setUploadError(
-        'Unsupported file type. Please upload a PDF (.pdf), PPT (.ppt), PPTX (.pptx), or MP4 (.mp4) file.'
+        check.error || 'Unsupported file type. Please upload a PDF (.pdf), PPT (.ppt), PPTX (.pptx), or MP4 (.mp4) file.'
       )
       return
     }
@@ -173,22 +224,23 @@ export const CourseDetailPage: React.FC = () => {
     setUploadProgress(0)
 
     try {
-      // 1. Upload to Firebase Storage
+      // 1. Upload to Supabase Storage
       const { downloadURL, storagePath, fileType } = await uploadCourseMaterialFile(
         courseId,
-        user.uid,
         file,
-        (progress) => setUploadProgress(progress)
+        (progress: number) => setUploadProgress(progress)
       )
 
       // 2. Save document to courses/{courseId}/materials/{materialId}
-      const newMaterial = await addCourseMaterial(courseId, user.uid, {
+      const newMaterial = await addCourseMaterial(courseId, {
+        courseId,
         name: file.name,
         type: fileType,
         storagePath,
         downloadURL,
         fileSizeBytes: file.size,
         processingStatus: 'uploaded',
+        uploadedAt: new Date().toISOString(),
       })
 
       // Update local state
@@ -209,14 +261,14 @@ export const CourseDetailPage: React.FC = () => {
   }
 
   // File Delete Handler
-  const handleDeleteMaterial = async (materialId: string, storagePath: string, name: string) => {
+  const handleDeleteMaterial = async (materialId: string, _storagePath: string, name: string) => {
     if (!courseId || !user) return
     const confirmed = window.confirm(`Are you sure you want to delete "${name}"?`)
     if (!confirmed) return
 
     setDeletingMaterialId(materialId)
     try {
-      await deleteCourseMaterial(courseId, materialId, user.uid, storagePath)
+      await deleteCourseMaterial(courseId, materialId)
       setMaterials((prev) => prev.filter((m) => m.materialId !== materialId))
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Could not delete material')
@@ -403,6 +455,15 @@ export const CourseDetailPage: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
+            <Button
+              variant="outline"
+              size="md"
+              onClick={openEditModal}
+              className="text-xs font-semibold border-slate-700 hover:border-emerald-500/50 hover:bg-slate-800/80 text-slate-200"
+              leftIcon={<Pencil className="w-3.5 h-3.5 text-emerald-400" />}
+            >
+              Edit Course
+            </Button>
             <Link to="/study">
               <Button
                 variant="primary"
@@ -689,6 +750,101 @@ export const CourseDetailPage: React.FC = () => {
         material={viewingChunksMaterial}
         courseId={course.courseId}
       />
+
+      {/* Edit Course Modal */}
+      {isEditModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
+          <div className="relative w-full max-w-lg bg-[#0D1322] border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center">
+                  <Pencil className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Edit Course Details</h3>
+                  <p className="text-xs text-slate-400">
+                    Update course title, discipline, or description.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsEditModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {editError && (
+              <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{editError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveCourseEdit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Course Name <span className="text-emerald-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-sm text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Subject / Discipline <span className="text-emerald-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editSubject}
+                  onChange={(e) => setEditSubject(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-sm text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Course Description
+                </label>
+                <textarea
+                  rows={3}
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-sm text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="pt-4 border-t border-slate-800 flex items-center justify-end gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="md"
+                  onClick={() => setIsEditModalOpen(false)}
+                  className="text-xs"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="md"
+                  isLoading={isSavingEdit}
+                  className="text-xs font-semibold bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700"
+                >
+                  Save Changes
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

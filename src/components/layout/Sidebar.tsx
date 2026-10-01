@@ -7,15 +7,17 @@ import {
   Award,
   TrendingUp,
   Compass,
-  User,
   Settings,
   LogOut,
   BrainCircuit,
   GraduationCap,
   Network,
   BarChart3,
+  CalendarDays,
+  RotateCcw,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
+import { useTranslation } from '@/context/LanguageContext'
 import { cn } from '@/lib/utils'
 
 interface SidebarProps {
@@ -24,6 +26,7 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
   const { user, logout } = useAuth()
+  const { t } = useTranslation()
   const navigate = useNavigate()
 
   const handleLogout = async () => {
@@ -32,16 +35,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
   }
 
   const navItems = [
-    { label: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
-    { label: 'My Courses', to: '/courses', icon: BookOpen },
-    { label: 'AI Tutor', to: '/tutor', icon: Sparkles },
-    { label: 'Quiz', to: '/quiz', icon: Award },
-    { label: 'Progress', to: '/progress', icon: TrendingUp },
-    { label: 'Recommendations', to: '/recommendations', icon: Compass },
-    { label: 'Knowledge Map', to: '/knowledge-map', icon: Network },
-    { label: 'Evaluation', to: '/evaluation', icon: BarChart3 },
-    { label: 'Profile', to: '/profile', icon: User },
-    { label: 'Settings', to: '/settings', icon: Settings },
+    { label: t('nav.dashboard'), to: '/dashboard', icon: LayoutDashboard },
+    { label: t('nav.courses'), to: '/courses', icon: BookOpen },
+    { label: t('nav.tutor'), to: '/tutor', icon: Sparkles },
+    { label: t('nav.quiz'), to: '/quiz', icon: Award },
+    { label: t('nav.studyPlan'), to: '/study-plan', icon: CalendarDays },
+    { label: t('nav.revision'), to: '/revision', icon: RotateCcw },
+    { label: t('nav.progress'), to: '/progress', icon: TrendingUp },
+    { label: t('nav.recommendations'), to: '/recommendations', icon: Compass },
+    { label: t('nav.knowledgeMap'), to: '/knowledge-map', icon: Network },
+    { label: t('nav.evaluation'), to: '/evaluation', icon: BarChart3 },
+    { label: t('nav.settings'), to: '/settings', icon: Settings },
   ]
 
   return (
@@ -65,7 +69,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
         </div>
 
         {/* Navigation Links */}
-        <nav className="p-4 space-y-1.5">
+        <nav className="p-4 space-y-1 overflow-y-auto max-h-[calc(100vh-12rem)]">
           {navItems.map((item) => {
             const Icon = item.icon
             return (

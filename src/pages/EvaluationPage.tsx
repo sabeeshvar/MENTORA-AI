@@ -14,7 +14,7 @@ import {
   getUserQuizAttempts,
   getUserTopicMasteries,
   getUserRecommendations,
-} from '@/lib/firebase/firestore'
+} from '@/lib/supabase/db'
 import type { CourseMaterial } from '@/types/course'
 import type { QuizAttempt } from '@/types/quiz'
 import type { TopicMastery, PersonalizedRecommendation } from '@/types/mastery'
@@ -246,7 +246,7 @@ export const EvaluationPage: React.FC = () => {
             <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-center justify-between">
               <div>
                 <span className="text-xs font-semibold text-slate-200 block">
-                  Topics Tracked in Firestore
+                  Topics Tracked in Supabase
                 </span>
                 <span className="text-[11px] text-slate-400">
                   Distinct topic mastery nodes actively maintained
@@ -325,14 +325,14 @@ export const EvaluationPage: React.FC = () => {
             <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-center justify-between">
               <div>
                 <span className="text-xs font-semibold text-slate-200 block">
-                  Groq Model Configuration
+                  Gemini Model Configuration
                 </span>
                 <span className="text-[11px] text-slate-400">
                   Inference model used for grounded tutor & quizzes
                 </span>
               </div>
               <span className="font-mono font-bold text-xs text-white">
-                llama-3.3-70b-versatile
+                gemini-2.5-flash
               </span>
             </div>
 

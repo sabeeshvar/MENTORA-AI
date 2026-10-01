@@ -18,6 +18,12 @@ export interface ChunkCandidate {
   embedding?: number[]
   embeddingModel?: string
   similarityScore?: number
+  content?: string
+  materialName?: string
+  materialType?: string
+  videoTimestamp?: string | null
+  topicId?: string
+  conceptId?: string
 }
 
 export interface RetrievedChunk {
@@ -33,11 +39,17 @@ export interface RetrievedChunk {
   chunkIndex: number
   similarityScore: number
   embeddingModel?: string
+  content?: string
+  materialName?: string
+  materialType?: string
+  videoTimestamp?: string | null
+  topicId?: string
+  conceptId?: string
 }
 
 /**
  * Modular Vector Store Backend Interface.
- * Allows seamless replacement with external vector databases (e.g., Pinecone, ChromaDB, Weaviate, Firestore Vector).
+ * Allows seamless replacement with external vector databases (e.g., Supabase pgvector, Pinecone, ChromaDB, Weaviate).
  */
 export interface IVectorStoreBackend {
   indexChunks(courseId: string, chunks: ChunkCandidate[]): Promise<void>
@@ -216,7 +228,7 @@ export const retrieveRelevantChunks = async (
 }
 
 /**
- * Formats retrieved chunks into clean, cited course context blocks for Groq LLM
+ * Formats retrieved chunks into clean, cited course context blocks for Gemini LLM
  */
 export const formatGroundedContext = (retrievedChunks: RetrievedChunk[]): string => {
   if (retrievedChunks.length === 0) {

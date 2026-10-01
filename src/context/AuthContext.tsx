@@ -4,10 +4,10 @@ import {
   subscribeToAuth,
   loginWithEmail,
   registerWithEmail,
-  loginWithGoogle as firebaseLoginWithGoogle,
-  resetPassword as firebaseResetPassword,
+  loginWithGoogle as supabaseLoginWithGoogle,
+  resetPassword as supabaseResetPassword,
   logoutUser,
-} from '@/lib/firebase/auth'
+} from '@/lib/supabase/auth'
 
 interface AuthContextType {
   user: UserProfile | null
@@ -56,7 +56,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithGoogle = async () => {
     setLoading(true)
     try {
-      const u = await firebaseLoginWithGoogle()
+      const u = await supabaseLoginWithGoogle()
       setUser(u)
     } finally {
       setLoading(false)
@@ -64,7 +64,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }
 
   const resetPassword = async (email: string) => {
-    await firebaseResetPassword(email)
+    await supabaseResetPassword(email)
   }
 
   const logout = async () => {

@@ -5,14 +5,16 @@ import {
   Flame,
   Award,
   BookOpen,
-  ArrowRight,
   TrendingUp,
   CheckCircle2,
   AlertTriangle,
   Play,
   Compass,
+  CalendarDays,
+  RotateCcw,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
+import { useTranslation } from '@/context/LanguageContext'
 import { Card } from '@/components/common/Card'
 import { Button } from '@/components/common/Button'
 import { Badge } from '@/components/common/Badge'
@@ -21,26 +23,34 @@ import {
   getUserTopicMasteries,
   getUserQuizAttempts,
   getUserRecommendations,
-} from '@/lib/firebase/firestore'
+  getStudyPlan,
+  getUserRevisionItems,
+} from '@/lib/supabase/db'
+import { StudyPlanService } from '@/services/studyPlanService'
 import type { TopicMastery, PersonalizedRecommendation } from '@/types/mastery'
 import type { Course } from '@/types/course'
 import type { QuizAttempt } from '@/types/quiz'
+import type { StudyPlan } from '@/types/studyPlan'
+import type { RevisionItem } from '@/types/revision'
 
 export const DashboardPage: React.FC = () => {
   const { user } = useAuth()
+  const { t } = useTranslation()
   const navigate = useNavigate()
 
   // DEMO MODE Toggle for Hackathon Judges
   const [isDemoMode, setIsDemoMode] = useState(false)
 
-  // Real Data States from Firebase
+  // Real Data States
   const [realCourses, setRealCourses] = useState<Course[]>([])
   const [realMasteries, setRealMasteries] = useState<TopicMastery[]>([])
   const [realAttempts, setRealAttempts] = useState<QuizAttempt[]>([])
   const [realRecs, setRealRecs] = useState<PersonalizedRecommendation[]>([])
+  const [realPlan, setRealPlan] = useState<StudyPlan | null>(null)
+  const [realRevisions, setRealRevisions] = useState<RevisionItem[]>([])
   const [_loading, setLoading] = useState(true)
 
-  // Load Real Firebase Data on Mount
+  // Load Real Data on Mount
   useEffect(() => {
     if (!user) return
     setLoading(true)
@@ -51,11 +61,21 @@ export const DashboardPage: React.FC = () => {
       getUserQuizAttempts(user.uid),
       getUserRecommendations(user.uid),
     ])
-      .then(([courses, masteries, attempts, recs]) => {
+      .then(async ([courses, masteries, attempts, recs]) => {
         setRealCourses(courses)
         setRealMasteries(masteries)
         setRealAttempts(attempts)
         setRealRecs(recs)
+
+        if (courses.length > 0) {
+          const firstCourseId = courses[0].courseId
+          const [plan, revs] = await Promise.all([
+            getStudyPlan(user.uid, firstCourseId),
+            getUserRevisionItems(user.uid, firstCourseId),
+          ])
+          setRealPlan(plan)
+          setRealRevisions(revs)
+        }
       })
       .catch((err) => console.warn('Dashboard data fetch error:', err))
       .finally(() => setLoading(false))
@@ -130,40 +150,128 @@ export const DashboardPage: React.FC = () => {
     },
   ]
 
-  const demoRecommendations: PersonalizedRecommendation[] = [
+  const demoPlan: StudyPlan = {
+    planId: 'demo_plan',
+    userId: 'demo',
+    courseId: 'demo_cs452',
+    courseTitle: 'CS 452: Distributed Systems',
+    targetDate: new Date(Date.now() + 12 * 86400000).toISOString().split('T')[0],
+    dailyAvailableMinutes: 90,
+    preferredDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+    status: 'active',
+    days: [
+      {
+        date: new Date().toISOString().split('T')[0],
+        dayLabel: 'Day 1 (Today)',
+        tasks: [
+          {
+            taskId: 't1',
+            topicId: 'raft_compaction',
+            topicName: 'Raft Log Compaction Revision',
+            taskType: 'REVISION',
+            durationMinutes: 30,
+            reason: 'Weak topic with 38% mastery.',
+            completed: true,
+          },
+          {
+            taskId: 't2',
+            topicId: 'consensus_quiz',
+            topicName: 'Paxos vs Raft Quiz',
+            taskType: 'QUIZ',
+            durationMinutes: 20,
+            reason: 'Verify understanding of leader election.',
+            completed: true,
+          },
+          {
+            taskId: 't3',
+            topicId: 'two_phase_commit',
+            topicName: '2PC & Distributed Transactions',
+            taskType: 'READING',
+            durationMinutes: 40,
+            reason: 'Prepare for atomic commit protocols.',
+            completed: false,
+          },
+        ],
+        totalMinutes: 90,
+        completedMinutes: 50,
+        status: 'partial',
+      },
+    ],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+
+  const demoRevisions: RevisionItem[] = [
     {
-      recommendationId: 'demo_rec_1',
-      userId: 'demo',
-      courseId: 'demo_cs452',
       topicId: 'raft_compaction',
-      type: 'REVISION',
-      title: "Review Raft Log Compaction & Snapshotting",
-      reason: "Your mastery is 38% and your last two quiz attempts contained errors on snapshotting states.",
-      priority: 'high',
-      estimatedMinutes: 6,
-      actionLabel: 'Ask Tutor',
-      createdAt: new Date().toISOString(),
+      topicName: 'Raft Log Compaction & Snapshotting',
+      courseId: 'demo_cs452',
+      userId: 'demo',
+      masteryScore: 0.38,
+      lastStudiedAt: new Date().toISOString(),
+      lastQuizScore: 40,
+      nextRevisionDue: new Date().toISOString(),
+      attempts: 8,
+      revisionCount: 2,
+      intervalDays: 1,
+      status: 'revise_now',
+      weakAreas: ['State machine snapshots'],
     },
     {
-      recommendationId: 'demo_rec_2',
+      topicId: 'probability_inference',
+      topicName: 'Markov Decision Processes',
+      courseId: 'demo_cs501',
       userId: 'demo',
-      courseId: 'demo_cs452',
-      topicId: 'raft_compaction',
-      type: 'QUIZ',
-      title: "Targeted Diagnostic Quiz on Consensus",
-      reason: "Take a 4-question adaptive quiz to repair conceptual gaps before advancing.",
-      priority: 'high',
-      estimatedMinutes: 5,
-      actionLabel: 'Start Quiz',
-      createdAt: new Date().toISOString(),
+      masteryScore: 0.51,
+      lastStudiedAt: new Date().toISOString(),
+      lastQuizScore: 50,
+      nextRevisionDue: new Date().toISOString(),
+      attempts: 6,
+      revisionCount: 1,
+      intervalDays: 3,
+      status: 'due_today',
+      weakAreas: ['Bellman expectation equations'],
+    },
+    {
+      topicId: 'backprop_calculus',
+      topicName: 'Backpropagation Chain Rule Derivatives',
+      courseId: 'demo_cs501',
+      userId: 'demo',
+      masteryScore: 0.56,
+      lastStudiedAt: new Date().toISOString(),
+      lastQuizScore: 60,
+      nextRevisionDue: new Date().toISOString(),
+      attempts: 12,
+      revisionCount: 3,
+      intervalDays: 7,
+      status: 'due_today',
+      weakAreas: ['Jacobian matrix dimensions'],
     },
   ]
 
   // Active Dataset based on Demo Toggle
   const courses = isDemoMode ? demoCourses : realCourses
   const masteries = isDemoMode ? demoMasteries : realMasteries
-  const recommendations = isDemoMode ? demoRecommendations : realRecs
+  const recommendations = isDemoMode
+    ? [
+        {
+          recommendationId: 'demo_rec_1',
+          userId: 'demo',
+          courseId: 'demo_cs452',
+          topicId: 'raft_compaction',
+          type: 'REVISION' as const,
+          title: 'Review Raft Log Compaction & Snapshotting',
+          reason: 'Your mastery is 38% and your last two quiz attempts contained errors on snapshotting states.',
+          priority: 'high' as const,
+          estimatedMinutes: 6,
+          actionLabel: 'Ask Tutor',
+          createdAt: new Date().toISOString(),
+        },
+      ]
+    : realRecs
   const attempts = isDemoMode ? [] : realAttempts
+  const studyPlan = isDemoMode ? demoPlan : realPlan
+  const revisionItems = isDemoMode ? demoRevisions : realRevisions
 
   // Computed Real Metrics
   const totalQuestionsAttempted = isDemoMode
@@ -183,9 +291,27 @@ export const DashboardPage: React.FC = () => {
       : 0
 
   const weakTopics = masteries.filter((m) => Math.round(m.masteryScore * 100) < 40)
-  const strongTopics = masteries.filter((m) => Math.round(m.masteryScore * 100) >= 85)
+
+  // Today's Study Plan calculations
+  const todayDateStr = new Date().toISOString().split('T')[0]
+  const todayDay = studyPlan?.days.find((d) => d.date === todayDateStr) || studyPlan?.days[0]
+  const todayCompletedMins = todayDay?.completedMinutes || 0
+  const todayTotalMins = todayDay?.totalMinutes || 60
+  const todayPct = todayTotalMins > 0 ? Math.round((todayCompletedMins / todayTotalMins) * 100) : 0
+
+  // Urgent Revision Topics (Top 3)
+  const urgentRevisions = revisionItems.filter((i) => i.masteryScore < 0.7).slice(0, 3)
 
   const currentCourse = courses.length > 0 ? courses[0] : null
+
+  const handleToggleTask = async (taskId: string) => {
+    if (!studyPlan || isDemoMode) return
+    const dayIdx = studyPlan.days.findIndex((d) => d.date === (todayDay?.date || ''))
+    if (dayIdx >= 0) {
+      const updated = await StudyPlanService.toggleTask(studyPlan, dayIdx, taskId)
+      setRealPlan(updated)
+    }
+  }
 
   return (
     <div className="space-y-8 pb-12">
@@ -195,7 +321,7 @@ export const DashboardPage: React.FC = () => {
           <div className="flex items-center gap-2">
             <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold">
               <Sparkles className="w-3.5 h-3.5" />
-              Source-Grounded AI Learning Companion
+              {t('dashboard.tagline')}
             </span>
             {isDemoMode && (
               <Badge variant="amber" size="sm">
@@ -215,7 +341,7 @@ export const DashboardPage: React.FC = () => {
           <p className="text-xs sm:text-sm text-slate-300">
             {isDemoMode
               ? 'Showing clearly labelled demo walkthrough data for hackathon judges.'
-              : 'Grounded in your real uploaded materials and live Firebase mastery history.'}
+              : 'Grounded in your real uploaded materials, Supabase mastery, and Gemini AI.'}
           </p>
         </div>
 
@@ -242,7 +368,7 @@ export const DashboardPage: React.FC = () => {
         </div>
       </div>
 
-      {/* 2. Top Metric Cards: Real Firebase Stats */}
+      {/* 2. Top Metric Cards: Real Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Overall Mastery */}
         <Card className="p-5 flex items-center gap-4 bg-slate-900/70 border-slate-800">
@@ -252,13 +378,13 @@ export const DashboardPage: React.FC = () => {
           <div>
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Overall Mastery
+                {t('dashboard.overallMastery')}
               </span>
               {isDemoMode && <Badge variant="amber" size="sm" className="text-[8px] py-0 px-1">DEMO</Badge>}
             </div>
             <h3 className="text-2xl font-black text-white">{overallMasteryPct}%</h3>
             <p className="text-[10px] text-emerald-400 font-semibold">
-              {masteries.length > 0 ? `${masteries.length} topics tracked` : 'No quiz data yet'}
+              {masteries.length > 0 ? `${masteries.length} ${t('dashboard.topicsTracked')}` : 'No quiz data yet'}
             </p>
           </div>
         </Card>
@@ -271,7 +397,7 @@ export const DashboardPage: React.FC = () => {
           <div>
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Questions Attempted
+                {t('dashboard.questionsAttempted')}
               </span>
               {isDemoMode && <Badge variant="amber" size="sm" className="text-[8px] py-0 px-1">DEMO</Badge>}
             </div>
@@ -290,7 +416,7 @@ export const DashboardPage: React.FC = () => {
           <div>
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Quiz Accuracy
+                {t('dashboard.quizAccuracy')}
               </span>
               {isDemoMode && <Badge variant="amber" size="sm" className="text-[8px] py-0 px-1">DEMO</Badge>}
             </div>
@@ -318,8 +444,139 @@ export const DashboardPage: React.FC = () => {
         </Card>
       </div>
 
-      {/* 3. Continue Learning / Current Course Banner */}
-      {currentCourse ? (
+      {/* 3. FEATURE 3 & 4: TODAY'S STUDY PLAN + REVISION DUE SECTIONS */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Today's Study Plan Section (Feature 3) */}
+        <Card className="p-6 bg-slate-900/70 border-slate-800 flex flex-col justify-between space-y-4">
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <CalendarDays className="w-5 h-5 text-emerald-400" />
+                <h3 className="text-base font-bold text-white">{t('dashboard.todaysPlan')}</h3>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate('/study-plan')}
+                className="text-xs border-slate-700"
+              >
+                View Full Plan
+              </Button>
+            </div>
+
+            {todayDay ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between text-xs text-slate-300">
+                  <span>
+                    Today's Goal: {Math.round(todayCompletedMins / 60 * 10) / 10}h /{' '}
+                    {Math.round(todayTotalMins / 60 * 10) / 10}h completed
+                  </span>
+                  <span className="font-bold text-emerald-400">{todayPct}%</span>
+                </div>
+
+                {/* Progress Bar */}
+                <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="bg-gradient-to-r from-emerald-500 to-teal-400 h-2 rounded-full transition-all duration-500"
+                    style={{ width: `${todayPct}%` }}
+                  />
+                </div>
+
+                {/* Task Checklist */}
+                <div className="space-y-2 pt-2">
+                  {todayDay.tasks.map((task) => (
+                    <div
+                      key={task.taskId}
+                      onClick={() => handleToggleTask(task.taskId)}
+                      className={`p-2.5 rounded-xl border text-xs flex items-center justify-between cursor-pointer transition-colors ${
+                        task.completed
+                          ? 'bg-emerald-500/10 border-emerald-500/30 text-slate-400'
+                          : 'bg-slate-950/60 border-slate-800 text-slate-200 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={task.completed ? 'text-emerald-400' : 'text-slate-500'}>
+                          {task.completed ? '✓' : '○'}
+                        </span>
+                        <span className={task.completed ? 'line-through' : 'font-semibold'}>
+                          {task.topicName}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-400">{task.durationMinutes} min</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="py-6 text-center text-xs text-slate-400 space-y-2">
+                <p>No study tasks scheduled for today.</p>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => navigate('/study-plan')}
+                  className="text-xs"
+                >
+                  {t('dashboard.createPlan')}
+                </Button>
+              </div>
+            )}
+          </div>
+        </Card>
+
+        {/* Revision Due Section (Feature 4) */}
+        <Card className="p-6 bg-slate-900/70 border-slate-800 flex flex-col justify-between space-y-4">
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <RotateCcw className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-white">{t('dashboard.revisionDue')}</h3>
+              </div>
+              <Badge variant="amber" size="sm">
+                {urgentRevisions.length} topics due
+              </Badge>
+            </div>
+
+            {urgentRevisions.length > 0 ? (
+              <div className="space-y-2.5 pt-1">
+                {urgentRevisions.map((item) => (
+                  <div
+                    key={item.topicId}
+                    className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 flex items-center justify-between"
+                  >
+                    <div>
+                      <h4 className="text-xs font-bold text-white line-clamp-1">{item.topicName}</h4>
+                      <span className="text-[10px] text-slate-400">
+                        Last studied: {new Date(item.lastStudiedAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <Badge variant={item.masteryScore < 0.4 ? 'rose' : 'amber'} size="sm">
+                      {Math.round(item.masteryScore * 100)}%
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-8 text-center text-xs text-slate-400">
+                All reviewed topics are currently on track!
+              </div>
+            )}
+          </div>
+
+          <div className="pt-2">
+            <Button
+              variant="primary"
+              onClick={() => navigate('/revision')}
+              className="w-full text-xs font-semibold bg-gradient-to-r from-amber-500 to-teal-500 hover:from-amber-600 shadow-md"
+              leftIcon={<Play className="w-3.5 h-3.5" />}
+            >
+              {t('dashboard.startRevision')}
+            </Button>
+          </div>
+        </Card>
+      </div>
+
+      {/* 4. Active Course Banner */}
+      {currentCourse && (
         <Card className="p-6 bg-slate-900/80 border-slate-800 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="space-y-1">
@@ -353,196 +610,80 @@ export const DashboardPage: React.FC = () => {
             </div>
           </div>
         </Card>
-      ) : (
-        /* Meaningful Empty State for Courses */
-        <Card className="p-8 text-center space-y-3 bg-slate-900/40 border-dashed border-slate-800">
-          <BookOpen className="w-10 h-10 text-slate-600 mx-auto" />
-          <h3 className="text-base font-bold text-slate-200">
-            Create your first course to start learning with MENTORA
-          </h3>
-          <p className="text-xs text-slate-500 max-w-md mx-auto">
-            Upload a PDF, presentation or lecture video to build your source-grounded knowledge base.
-          </p>
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={() => navigate('/courses')}
-            rightIcon={<ArrowRight className="w-4 h-4" />}
-          >
-            Create Course
-          </Button>
-        </Card>
       )}
 
-      {/* 4. Two-Column Layout: Weak/Strong Topics & Recommendations */}
+      {/* 5. Two-Column Layout: Weak Topics & Recommendations */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left Column: Weak & Strong Topics */}
-        <div className="space-y-6">
-          {/* Weak Topics Section */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-400" />
-                Diagnosed Weak Topics ({weakTopics.length})
-              </h3>
-              {isDemoMode && <Badge variant="amber" size="sm">DEMO DATA</Badge>}
-            </div>
+        {/* Left Column: Weak Topics */}
+        <div className="space-y-4">
+          <h3 className="text-sm font-bold text-white flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-400" />
+            {t('dashboard.weakAreas')} ({weakTopics.length})
+          </h3>
 
-            {weakTopics.length > 0 ? (
-              <div className="space-y-3">
-                {weakTopics.map((topic) => (
-                  <Card
-                    key={topic.topicId}
-                    className="p-4 bg-slate-900/70 border-rose-500/20 space-y-2"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <h4 className="text-xs sm:text-sm font-bold text-white">{topic.topicName}</h4>
-                      <Badge variant="rose" size="sm">
-                        {Math.round(topic.masteryScore * 100)}% Mastery
-                      </Badge>
-                    </div>
-
-                    <p className="text-[11px] text-slate-400">
-                      {topic.incorrectAnswers} incorrect answers out of {topic.attempts} attempts.
-                    </p>
-
-                    <div className="pt-2 flex justify-end">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          navigate(
-                            `/quiz?courseId=${topic.courseId}&topic=${encodeURIComponent(
-                              topic.topicName
-                            )}`
-                          )
-                        }
-                        className="text-xs border-rose-500/30 text-rose-300 hover:bg-rose-500/10"
-                        rightIcon={<Play className="w-3 h-3" />}
-                      >
-                        Targeted Remediation Quiz
-                      </Button>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            ) : (
-              <Card className="p-6 text-center text-xs text-slate-500 bg-slate-900/30 border-slate-800">
-                {masteries.length === 0
-                  ? 'Complete your first quiz to start building your mastery profile and detect weak spots.'
-                  : 'No weak spots detected! All active topics are developing or mastered.'}
-              </Card>
-            )}
-          </div>
-
-          {/* Strong Topics Section */}
-          <div className="space-y-3">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              Mastered Strong Topics ({strongTopics.length})
-            </h3>
-
-            {strongTopics.length > 0 ? (
-              <div className="space-y-3">
-                {strongTopics.map((topic) => (
-                  <Card
-                    key={topic.topicId}
-                    className="p-4 bg-slate-900/70 border-emerald-500/20 flex items-center justify-between gap-2"
-                  >
-                    <div>
-                      <h4 className="text-xs sm:text-sm font-bold text-white">{topic.topicName}</h4>
-                      <p className="text-[11px] text-slate-400 mt-0.5">
-                        {topic.correctAnswers} of {topic.attempts} correct answers
-                      </p>
-                    </div>
-                    <Badge variant="emerald" size="sm">
-                      {Math.round(topic.masteryScore * 100)}% Mastered
-                    </Badge>
-                  </Card>
-                ))}
-              </div>
-            ) : (
-              <Card className="p-6 text-center text-xs text-slate-500 bg-slate-900/30 border-slate-800">
-                {masteries.length === 0
-                  ? 'Complete quizzes with high accuracy to advance topics into Mastered status.'
-                  : 'Topics will move here as mastery reaches 85%+.'}
-              </Card>
-            )}
-          </div>
-        </div>
-
-        {/* Right Column: Personalized Recommendations */}
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <Compass className="w-4 h-4 text-emerald-400" />
-              Personalized Recommendations ({recommendations.length})
-            </h3>
-            {isDemoMode && <Badge variant="amber" size="sm">DEMO DATA</Badge>}
-          </div>
-
-          {recommendations.length > 0 ? (
+          {weakTopics.length > 0 ? (
             <div className="space-y-3">
-              {recommendations.map((rec) => (
+              {weakTopics.map((topic) => (
                 <Card
-                  key={rec.recommendationId}
-                  className="p-4 sm:p-5 bg-slate-900/80 border-slate-800 space-y-3"
+                  key={topic.topicId}
+                  className="p-4 bg-slate-900/70 border-rose-500/20 space-y-2"
                 >
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <Badge
-                        variant={
-                          rec.type === 'REVISION'
-                            ? 'rose'
-                            : rec.type === 'QUIZ'
-                            ? 'purple'
-                            : 'amber'
-                        }
-                        size="sm"
-                      >
-                        {rec.type}
-                      </Badge>
-                      {rec.estimatedMinutes && (
-                        <span className="text-[10px] text-slate-500">
-                          ~{rec.estimatedMinutes} mins
-                        </span>
-                      )}
-                    </div>
-                    <h4 className="text-sm font-bold text-white">{rec.title}</h4>
-                    <p className="text-xs text-slate-400 leading-relaxed">{rec.reason}</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-xs sm:text-sm font-bold text-white">{topic.topicName}</h4>
+                    <Badge variant="rose" size="sm">
+                      {Math.round(topic.masteryScore * 100)}% Mastery
+                    </Badge>
                   </div>
-
-                  <div className="pt-2 border-t border-slate-800 flex justify-end">
+                  <div className="pt-2 flex justify-end">
                     <Button
                       size="sm"
-                      variant="primary"
-                      onClick={() => {
-                        if (rec.type === 'REVISION') {
-                          navigate(
-                            `/tutor?courseId=${rec.courseId}&topic=${encodeURIComponent(rec.title)}`
-                          )
-                        } else {
-                          navigate(`/quiz?courseId=${rec.courseId}`)
-                        }
-                      }}
-                      rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
+                      variant="outline"
+                      onClick={() =>
+                        navigate(
+                          `/quiz?courseId=${topic.courseId}&topic=${encodeURIComponent(
+                            topic.topicName
+                          )}`
+                        )
+                      }
+                      className="text-xs border-rose-500/30 text-rose-300 hover:bg-rose-500/10"
+                      rightIcon={<Play className="w-3 h-3" />}
                     >
-                      {rec.actionLabel || 'Follow Recommendation'}
+                      Targeted Remediation Quiz
                     </Button>
                   </div>
                 </Card>
               ))}
             </div>
           ) : (
-            /* Meaningful Empty State for Recommendations */
-            <Card className="p-8 text-center space-y-3 bg-slate-900/30 border-slate-800">
-              <Compass className="w-8 h-8 text-slate-600 mx-auto" />
-              <h4 className="text-xs font-bold text-slate-300">No Recommendations Generated</h4>
-              <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                Complete a few learning activities and MENTORA will personalize your next study steps.
-              </p>
+            <Card className="p-6 text-center text-xs text-slate-500 bg-slate-900/30 border-slate-800">
+              No weak spots detected! All active topics are developing or mastered.
             </Card>
           )}
+        </div>
+
+        {/* Right Column: Personalized Next Steps */}
+        <div className="space-y-4">
+          <h3 className="text-sm font-bold text-white flex items-center gap-2">
+            <Compass className="w-4 h-4 text-teal-400" />
+            {t('dashboard.recommendations')}
+          </h3>
+
+          <div className="space-y-3">
+            {recommendations.slice(0, 3).map((rec) => (
+              <Card
+                key={rec.recommendationId}
+                className="p-4 bg-slate-900/70 border-slate-800 space-y-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="text-xs sm:text-sm font-bold text-white">{rec.title}</h4>
+                  <Badge variant="emerald" size="sm">
+                    {rec.type}
+                  </Badge>
+                </div>
+                <p className="text-[11px] text-slate-400">{rec.reason}</p>
+              </Card>
+            ))}
+          </div>
         </div>
       </div>
     </div>

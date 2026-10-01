@@ -1,8 +1,9 @@
 import React from 'react'
 import { Menu, Search, Bell, Sparkles, Flame } from 'lucide-react'
-import { isFirebaseConfigured } from '@/lib/firebase/config'
+import { isSupabaseConfigured } from '@/lib/supabase/config'
 import { useAuth } from '@/context/AuthContext'
 import { Badge } from '@/components/common/Badge'
+import { LanguageSelector } from '@/components/common/LanguageSelector'
 
 interface HeaderProps {
   onToggleMobileMenu: () => void
@@ -10,7 +11,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu }) => {
   const { user } = useAuth()
-  const isFbConnected = isFirebaseConfigured()
+  const isSupaConnected = isSupabaseConfigured()
   const streakDays = user?.learningStats?.streakDays ?? 3
 
   return (
@@ -35,18 +36,21 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu }) => {
         </div>
       </div>
 
-      {/* Right: Streak, status badge, notifications, and AI status */}
-      <div className="flex items-center gap-3">
+      {/* Right: Language selector, streak, status badge, notifications, and AI status */}
+      <div className="flex items-center gap-2.5 sm:gap-3">
+        {/* Multilingual Selector */}
+        <LanguageSelector compact />
+
         {/* Learning Streak Pill */}
-        <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-bold">
+        <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-bold">
           <Flame className="w-3.5 h-3.5 fill-amber-400 text-amber-400 animate-pulse" />
           <span>{streakDays} {streakDays === 1 ? 'Day' : 'Days'} Streak</span>
         </div>
 
-        {isFbConnected ? (
+        {isSupaConnected ? (
           <Badge variant="emerald" size="sm">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-            Cloud Synced
+            Supabase Cloud
           </Badge>
         ) : (
           <Badge variant="amber" size="sm">
@@ -57,7 +61,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu }) => {
 
         <div className="hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-teal-500/10 border border-teal-500/20 text-teal-300 text-xs font-medium">
           <Sparkles className="w-3.5 h-3.5 text-teal-400" />
-          <span>Groq LLaMA 3.3 Engine</span>
+          <span>Gemini 2.5 Flash Engine</span>
         </div>
 
         <button
@@ -71,4 +75,3 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu }) => {
     </header>
   )
 }
-

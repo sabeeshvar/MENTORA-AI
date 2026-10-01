@@ -17,6 +17,10 @@ export interface CourseMaterial {
   uploadedAt: string
   processingStatus: MaterialProcessingStatus
   fileSizeBytes?: number
+  size?: number
+  ownerId?: string
+  createdAt?: string
+  updatedAt?: string
   chunksCount?: number
   errorMessage?: string
 }

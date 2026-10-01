@@ -16,7 +16,7 @@ import { useAuth } from '@/context/AuthContext'
 import { Card } from '@/components/common/Card'
 import { Button } from '@/components/common/Button'
 import { Badge } from '@/components/common/Badge'
-import { getUserCourses, createCourse, deleteCourse } from '@/lib/firebase/firestore'
+import { getUserCourses, createCourse, deleteCourse } from '@/lib/supabase/db'
 import type { Course } from '@/types/course'
 
 const SUBJECT_SUGGESTIONS = [

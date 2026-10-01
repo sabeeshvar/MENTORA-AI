@@ -18,7 +18,7 @@ import {
   getUserTopicMasteries,
   getUserQuizAttempts,
   getUserRecommendations,
-} from '@/lib/firebase/firestore'
+} from '@/lib/supabase/db'
 import { getMasteryStatus, type TopicMastery, type PersonalizedRecommendation } from '@/types/mastery'
 import type { QuizAttempt } from '@/types/quiz'
 
@@ -49,7 +49,7 @@ export const MasteryPage: React.FC = () => {
       .finally(() => setLoading(false))
   }, [user])
 
-  // Real Metric Aggregations from Firebase Data
+  // Real Metric Aggregations from Supabase Data
   const totalQuizzes = attempts.length
   const totalQuestionsAttempted = attempts.reduce((acc, a) => acc + (a.totalQuestions || 0), 0)
   const totalCorrect = attempts.reduce((acc, a) => acc + (a.correctCount || 0), 0)

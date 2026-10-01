@@ -2,7 +2,7 @@ import type { CourseMaterial, CourseMaterialType } from '@/types/course'
 import {
   saveMaterialChunks,
   updateMaterialProcessingStatus,
-} from '@/lib/firebase/firestore'
+} from '@/lib/supabase/db'
 import { extractPdfPages } from './pdfExtractor'
 import { extractPptxSlides } from './pptxExtractor'
 import { createChunksFromExtractedPages } from './chunkingService'
@@ -109,7 +109,7 @@ export interface ProcessMaterialPipelineParams {
  * -> clean text
  * -> split into meaningful chunks
  * -> attach metadata
- * -> store processed content in Firestore (courses/{courseId}/materials/{materialId}/chunks)
+ * -> store processed content in Supabase PostgreSQL (course_chunks)
  * -> update status to 'processed' (or 'failed' on error)
  */
 export const processUploadedMaterial = async (
@@ -181,15 +181,13 @@ export const processUploadedMaterial = async (
       chunks[i].embeddingModel = defaultEmbeddingService.modelName
     }
 
-    // 5. Save chunks with embeddings and metadata to Firestore
-    reportProgress(`Saving ${chunks.length} structured chunks to Firestore...`, 92)
+    // 5. Save chunks with embeddings and metadata to Supabase
+    reportProgress(`Saving ${chunks.length} structured chunks to Supabase...`, 92)
     await saveMaterialChunks(courseId, material.materialId, chunks)
 
     // 5. Update processing status to 'processed'
     reportProgress('Finalizing material processing...', 98)
-    await updateMaterialProcessingStatus(courseId, material.materialId, 'processed', {
-      chunksCount: chunks.length,
-    })
+    await updateMaterialProcessingStatus(courseId, material.materialId, 'processed', undefined, chunks.length)
 
     reportProgress('Completed processing successfully!', 100)
 
@@ -205,9 +203,7 @@ export const processUploadedMaterial = async (
     const errorMsg = error?.message || 'Failed to process learning material'
     console.error(`Pipeline failure for material ${material.materialId}:`, error)
 
-    await updateMaterialProcessingStatus(courseId, material.materialId, 'failed', {
-      errorMessage: errorMsg,
-    })
+    await updateMaterialProcessingStatus(courseId, material.materialId, 'failed', errorMsg)
 
     throw error
   }

@@ -31,16 +31,16 @@ export const formatSecondsToTimestamp = (seconds: number): string => {
 }
 
 /**
- * Modular Whisper / Groq Audio Transcription Provider:
+ * Modular Whisper Audio Transcription Provider:
  * Communicates with backend audio transcription service when configured.
  * If not configured, does NOT fake transcript data as per engineering guidelines.
  */
-export class WhisperGroqSpeechToTextProvider implements ISpeechToTextProvider {
-  public name = 'Groq Whisper-large-v3'
+export class WhisperSpeechToTextProvider implements ISpeechToTextProvider {
+  public name = 'Whisper Audio Transcription'
   private apiEndpoint: string
 
   constructor(apiEndpoint?: string) {
-    this.apiEndpoint = apiEndpoint || '/api/groq/transcribe'
+    this.apiEndpoint = apiEndpoint || '/api/ai/transcribe'
   }
 
   public isConfigured(): boolean {
@@ -57,13 +57,13 @@ export class WhisperGroqSpeechToTextProvider implements ISpeechToTextProvider {
 
     if (!this.isConfigured()) {
       throw new Error(
-        'Speech-to-text provider is not configured. Please configure an STT provider (e.g. Whisper / Groq Audio API) to transcribe lecture videos.'
+        'Speech-to-text provider is not configured. Please configure an STT provider (e.g. Whisper Audio API) to transcribe lecture videos.'
       )
     }
 
     onProgress?.('Uploading audio stream to transcription service...', 45)
 
-    // In a live server with Whisper configured, this sends mediaBuffer to /api/groq/transcribe
+    // In a live server with Whisper configured, this sends mediaBuffer to transcription endpoint
     // If the backend responds with not configured or error, it provides a clean error message.
     try {
       const formData = new FormData()

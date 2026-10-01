@@ -23,7 +23,8 @@ import {
   getCourseQuizzes,
   getUserQuizAttempts,
   saveQuiz,
-} from '@/lib/firebase/firestore'
+} from '@/lib/supabase/db'
+import { useTranslation } from '@/context/LanguageContext'
 import {
   generateGroundedQuizApi,
   evaluateQuizAnswerApi,
@@ -43,6 +44,7 @@ import type {
 
 export const QuizzesPage: React.FC = () => {
   const { user } = useAuth()
+  const { language } = useTranslation()
 
   // State: Courses & Materials
   const [courses, setCourses] = useState<Course[]>([])
@@ -161,6 +163,7 @@ export const QuizzesPage: React.FC = () => {
         numberOfQuestions: genCount,
         questionTypes: genTypes,
         chunks: courseChunks,
+        preferredLanguage: language,
       })
 
       const newQuiz: Quiz = {
@@ -182,7 +185,7 @@ export const QuizzesPage: React.FC = () => {
       startQuiz(newQuiz)
     } catch (err: any) {
       console.error('Quiz generation error:', err)
-      setGenError(err?.message || 'Failed to generate grounded quiz. Verify server and GROQ_API_KEY.')
+      setGenError(err?.message || 'Failed to generate grounded quiz. Verify server and GEMINI_API_KEY.')
     } finally {
       setIsGenerating(false)
     }
@@ -214,7 +217,7 @@ export const QuizzesPage: React.FC = () => {
     setRemedyActionResponse(null)
 
     try {
-      const result = await evaluateQuizAnswerApi(currentQ, answerToSubmit.trim())
+      const result = await evaluateQuizAnswerApi(currentQ, answerToSubmit.trim(), language)
       setEvaluatedResult(result)
       setQuizResults((prev) => [...prev, result])
     } catch (err: any) {
@@ -470,7 +473,7 @@ export const QuizzesPage: React.FC = () => {
                   }
                   leftIcon={isEvaluating ? <Loader2 className="w-4 h-4 animate-spin" /> : undefined}
                 >
-                  {isEvaluating ? 'Evaluating with Groq...' : 'Submit Answer'}
+                  {isEvaluating ? 'Evaluating with Gemini...' : 'Submit Answer'}
                 </Button>
               </div>
             </div>
@@ -717,7 +720,7 @@ export const QuizzesPage: React.FC = () => {
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
                   <TrendingUp className="w-4 h-4" />
-                  Topic Mastery Updated in Firestore
+                  Topic Mastery Updated in Supabase
                 </span>
                 <Badge
                   variant={getMasteryStatus(updatedMasteries[0].masteryScore).color}
@@ -829,7 +832,7 @@ export const QuizzesPage: React.FC = () => {
               <p className="text-xs text-amber-300/90 mt-0.5">
                 Upload PDFs or lecture slides for{' '}
                 <strong>{selectedCourse?.title || 'this course'}</strong> in My Courses to allow
-                Groq to generate grounded quizzes.
+                Gemini to generate grounded quizzes.
               </p>
             </div>
           </div>
@@ -1096,7 +1099,7 @@ export const QuizzesPage: React.FC = () => {
                     )
                   }
                 >
-                  {isGenerating ? 'Synthesizing with Groq...' : 'Generate Grounded Quiz'}
+                  {isGenerating ? 'Synthesizing with Gemini...' : 'Generate Grounded Quiz'}
                 </Button>
               </div>
             </form>

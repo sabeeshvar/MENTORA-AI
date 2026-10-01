@@ -2,7 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import { serverConfig } from './config'
 import { healthRouter } from './routes/health'
-import { groqRouter } from './routes/groq'
+import { geminiRouter } from './routes/gemini'
 
 const app = express()
 
@@ -12,7 +12,8 @@ app.use(express.json())
 
 // Mount Modular API Routes
 app.use('/api/health', healthRouter)
-app.use('/api/groq', groqRouter)
+app.use('/api/ai', geminiRouter)
+app.use('/api/gemini', geminiRouter)
 
 // Fallback 404 handler for API routes
 app.use('/api/*', (_req, res) => {
@@ -23,7 +24,9 @@ app.use('/api/*', (_req, res) => {
 app.listen(serverConfig.port, () => {
   console.log(`🚀 Mentora AI API Server listening on port ${serverConfig.port}`)
   console.log(`   Environment: ${serverConfig.nodeEnv}`)
-  console.log(`   Groq AI Configured: ${serverConfig.isGroqConfigured ? 'Yes' : 'No (Pending Key)'}`)
+  console.log(`   AI Engine: Google Gemini 2.5 Flash`)
+  console.log(`   Gemini Configured: ${serverConfig.isGeminiConfigured ? 'Yes' : 'No (Pending Key)'}`)
+  console.log(`   Supabase Configured: ${serverConfig.isSupabaseConfigured ? 'Yes' : 'No (Local/Mock Mode)'}`)
 })
 
 export default app

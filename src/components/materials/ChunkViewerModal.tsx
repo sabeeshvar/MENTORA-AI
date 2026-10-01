@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/common/Button'
 import { Badge } from '@/components/common/Badge'
-import { getMaterialChunks } from '@/lib/firebase/firestore'
+import { getMaterialChunks } from '@/lib/supabase/db'
 import type { ProcessedChunk } from '@/types/chunk'
 import type { CourseMaterial } from '@/types/course'
 
@@ -125,7 +125,7 @@ export const ChunkViewerModal: React.FC<ChunkViewerModalProps> = ({
         {loading ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-3">
             <Loader2 className="w-8 h-8 text-emerald-500 animate-spin" />
-            <p className="text-xs text-slate-400">Loading structured chunks from Firestore...</p>
+            <p className="text-xs text-slate-400">Loading structured chunks from Supabase...</p>
           </div>
         ) : error ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center p-6">

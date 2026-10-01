@@ -17,6 +17,7 @@ export interface UserProfile {
   lastLoginAt: string
   learningStats: LearningStats
   displayName?: string | null
+  preferredLanguage?: string
 }
 
 export interface AuthState {

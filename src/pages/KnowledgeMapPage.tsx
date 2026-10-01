@@ -18,7 +18,7 @@ import {
   getCourseMaterials,
   getMaterialChunks,
   getUserTopicMasteries,
-} from '@/lib/firebase/firestore'
+} from '@/lib/supabase/db'
 import { KnowledgeMapService } from '@/services/knowledgeMapService'
 import { getMasteryStatus } from '@/types/mastery'
 import type { CourseKnowledgeMap, TopicNode, ConceptNode } from '@/types/knowledgeMap'

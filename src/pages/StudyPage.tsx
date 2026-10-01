@@ -23,12 +23,13 @@ import {
   getUserCourses,
   getCourseMaterials,
   getMaterialChunks,
-} from '@/lib/firebase/firestore'
+} from '@/lib/supabase/db'
 import {
-  askGroqTutor,
-  checkGroqStatus,
+  askAITutor,
+  checkAIStatus,
   type SourceCitation,
 } from '@/services/tutorApi'
+import { useTranslation } from '@/context/LanguageContext'
 import type { Course, CourseMaterial } from '@/types/course'
 import type { ProcessedChunk } from '@/types/chunk'
 
@@ -46,6 +47,7 @@ interface ChatMessage {
 
 export const StudyPage: React.FC = () => {
   const { user } = useAuth()
+  const { language } = useTranslation()
 
   // Course Selection & Data States
   const [courses, setCourses] = useState<Course[]>([])
@@ -54,8 +56,8 @@ export const StudyPage: React.FC = () => {
   const [courseChunks, setCourseChunks] = useState<ProcessedChunk[]>([])
   const [loadingCourseData, setLoadingCourseData] = useState(false)
 
-  // Groq Server Status
-  const [isGroqConfigured, setIsGroqConfigured] = useState<boolean | null>(null)
+  // AI Server Status
+  const [isGeminiConfigured, setIsGeminiConfigured] = useState<boolean | null>(null)
 
   // Chat States
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -74,10 +76,10 @@ export const StudyPage: React.FC = () => {
     scrollToBottom()
   }, [messages, isThinking])
 
-  // Check backend Groq API configuration status on mount
+  // Check backend AI engine configuration status on mount
   useEffect(() => {
-    checkGroqStatus().then((status) => {
-      setIsGroqConfigured(status.configured)
+    checkAIStatus().then((status) => {
+      setIsGeminiConfigured(status.configured)
     })
   }, [])
 
@@ -131,7 +133,7 @@ export const StudyPage: React.FC = () => {
 
   const selectedCourse = courses.find((c) => c.courseId === selectedCourseId)
 
-  // Send Question to RAG Groq Tutor
+  // Send Question to RAG Gemini Tutor
   const handleSendMessage = async (textToSend?: string) => {
     const query = (textToSend || inputQuestion).trim()
     if (!query || isThinking || !selectedCourseId) return
@@ -151,7 +153,7 @@ export const StudyPage: React.FC = () => {
     setThinkingStage('Searching indexed course chunks...')
 
     const thinkingTimer = setTimeout(() => {
-      setThinkingStage('Groq LLaMA 3.3 synthesizing cited explanation...')
+      setThinkingStage('Google Gemini 2.5 Flash synthesizing cited explanation...')
     }, 900)
 
     try {
@@ -161,12 +163,13 @@ export const StudyPage: React.FC = () => {
         content: m.text,
       }))
 
-      const result = await askGroqTutor({
+      const result = await askAITutor({
         courseId: selectedCourseId,
         question: query,
         courseTitle: selectedCourse?.title,
         chunks: courseChunks,
         conversationHistory: history,
+        preferredLanguage: language,
       })
 
       const assistantMessage: ChatMessage = {
@@ -185,11 +188,11 @@ export const StudyPage: React.FC = () => {
       console.error('Tutor query error:', err)
       const errorMsg =
         err?.message ||
-        'Failed to receive answer from Groq tutor. Please check server logs and GROQ_API_KEY.'
+        'Failed to receive answer from Gemini tutor. Please check server logs and GEMINI_API_KEY.'
 
       if (err?.configured === false || err?.status === 503) {
         setErrorBanner(
-          'GROQ_API_KEY is not set on the server. Please add your Groq API key in the .env file to enable live Groq LLaMA 3.3 answers.'
+          'GEMINI_API_KEY is not set on the server. Please add your Gemini API key in the .env file to enable live Gemini answers.'
         )
       } else {
         setErrorBanner(errorMsg)
@@ -290,18 +293,18 @@ export const StudyPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Groq Key Warning Banner if unconfigured on backend */}
-      {isGroqConfigured === false && (
+      {/* Gemini Key Warning Banner if unconfigured on backend */}
+      {isGeminiConfigured === false && (
         <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
             <span>
-              <strong>Groq API Key Required:</strong> Add your <code>GROQ_API_KEY</code> in the server{' '}
-              <code>.env</code> file to enable live Groq LLaMA 3.3 answers.
+              <strong>Gemini API Key Required:</strong> Add your <code>GEMINI_API_KEY</code> in the server{' '}
+              <code>.env</code> file to enable live Google Gemini 2.5 Flash answers.
             </span>
           </div>
           <a
-            href="https://console.groq.com/keys"
+            href="https://aistudio.google.com/apikey"
             target="_blank"
             rel="noopener noreferrer"
             className="shrink-0 underline text-amber-300 hover:text-white font-semibold"

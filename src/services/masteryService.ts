@@ -4,7 +4,7 @@ import {
   getTopicMastery,
   saveUserQuizAttempt,
   saveUserRecommendations,
-} from '@/lib/firebase/firestore'
+} from '@/lib/supabase/db'
 import type {
   TopicMastery,
   PersonalizedRecommendation,
@@ -56,7 +56,7 @@ export class MasteryService {
 
   /**
    * Process a completed quiz attempt:
-   * 1. Updates topic-level mastery in Firestore
+   * 1. Updates topic-level mastery in Supabase PostgreSQL
    * 2. Persists the QuizAttempt record
    * 3. Triggers personalized recommendation updates
    */
