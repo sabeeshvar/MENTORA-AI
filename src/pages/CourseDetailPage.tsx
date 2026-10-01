@@ -15,6 +15,10 @@ import {
   Layers,
   Sparkles,
   ShieldAlert,
+  Play,
+  Clock,
+  RefreshCw,
+  Eye,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { Card } from '@/components/common/Card'
@@ -27,6 +31,8 @@ import {
   deleteCourseMaterial,
 } from '@/lib/firebase/firestore'
 import { uploadCourseMaterialFile, isSupportedMaterialFile } from '@/lib/firebase/storage'
+import { processUploadedMaterial } from '@/services/extraction'
+import { ChunkViewerModal } from '@/components/materials/ChunkViewerModal'
 import type { Course, CourseMaterial, CourseMaterialType } from '@/types/course'
 
 export const CourseDetailPage: React.FC = () => {
@@ -45,6 +51,12 @@ export const CourseDetailPage: React.FC = () => {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
+
+  // Extraction Processing States
+  const [processingStatusMap, setProcessingStatusMap] = useState<
+    Record<string, { stage: string; percent: number }>
+  >({})
+  const [viewingChunksMaterial, setViewingChunksMaterial] = useState<CourseMaterial | null>(null)
 
   // Deleting Material ID
   const [deletingMaterialId, setDeletingMaterialId] = useState<string | null>(null)
@@ -83,6 +95,66 @@ export const CourseDetailPage: React.FC = () => {
     loadCourseData()
   }, [courseId, user])
 
+  // Extraction Pipeline Trigger
+  const handleProcessMaterial = async (material: CourseMaterial, fileData?: File) => {
+    if (!courseId) return
+    const matId = material.materialId
+
+    setProcessingStatusMap((prev) => ({
+      ...prev,
+      [matId]: { stage: 'Initializing extraction pipeline...', percent: 5 },
+    }))
+
+    setMaterials((prev) =>
+      prev.map((m) =>
+        m.materialId === matId ? { ...m, processingStatus: 'processing', errorMessage: undefined } : m
+      )
+    )
+
+    try {
+      const result = await processUploadedMaterial({
+        courseId,
+        material,
+        fileData,
+        onProgress: (stage, percent) => {
+          setProcessingStatusMap((prev) => ({
+            ...prev,
+            [matId]: { stage, percent },
+          }))
+        },
+      })
+
+      // Update state with processed counts
+      setMaterials((prev) =>
+        prev.map((m) =>
+          m.materialId === matId
+            ? {
+                ...m,
+                processingStatus: 'processed',
+                chunksCount: result.totalChunks,
+                errorMessage: undefined,
+              }
+            : m
+        )
+      )
+    } catch (err: any) {
+      const msg = err?.message || 'Processing failed'
+      setMaterials((prev) =>
+        prev.map((m) =>
+          m.materialId === matId
+            ? { ...m, processingStatus: 'failed', errorMessage: msg }
+            : m
+        )
+      )
+    } finally {
+      setProcessingStatusMap((prev) => {
+        const copy = { ...prev }
+        delete copy[matId]
+        return copy
+      })
+    }
+  }
+
   // File Upload Handler
   const handleFileUpload = async (files: FileList | null) => {
     if (!files || files.length === 0 || !courseId || !user) return
@@ -91,7 +163,9 @@ export const CourseDetailPage: React.FC = () => {
     setUploadError(null)
 
     if (!isSupportedMaterialFile(file.name)) {
-      setUploadError('Unsupported file type. Please upload a PDF (.pdf), PPT (.ppt), PPTX (.pptx), or MP4 (.mp4) file.')
+      setUploadError(
+        'Unsupported file type. Please upload a PDF (.pdf), PPT (.ppt), PPTX (.pptx), or MP4 (.mp4) file.'
+      )
       return
     }
 
@@ -114,12 +188,15 @@ export const CourseDetailPage: React.FC = () => {
         storagePath,
         downloadURL,
         fileSizeBytes: file.size,
-        processingStatus: 'ready',
+        processingStatus: 'uploaded',
       })
 
-      // Update state
+      // Update local state
       setMaterials((prev) => [newMaterial, ...prev])
       setUploadProgress(100)
+
+      // 3. Automatically launch processing pipeline on the uploaded document
+      handleProcessMaterial(newMaterial, file)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to upload material'
       setUploadError(msg)
@@ -200,6 +277,48 @@ export const CourseDetailPage: React.FC = () => {
       default:
         return 'emerald' as const
     }
+  }
+
+  const renderStatusBadge = (material: CourseMaterial) => {
+    const active = processingStatusMap[material.materialId]
+    if (active || material.processingStatus === 'processing') {
+      return (
+        <Badge variant="amber" size="sm" className="flex items-center gap-1">
+          <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
+          Processing {active ? `${active.percent}%` : '...'}
+        </Badge>
+      )
+    }
+
+    if (material.processingStatus === 'processed') {
+      return (
+        <Badge variant="emerald" size="sm" className="flex items-center gap-1">
+          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+          Processed {material.chunksCount !== undefined ? `(${material.chunksCount} chunks)` : ''}
+        </Badge>
+      )
+    }
+
+    if (material.processingStatus === 'failed') {
+      return (
+        <Badge
+          variant="rose"
+          size="sm"
+          className="flex items-center gap-1 cursor-help"
+          title={material.errorMessage || 'Extraction failed'}
+        >
+          <AlertCircle className="w-3 h-3 text-rose-400" />
+          Failed
+        </Badge>
+      )
+    }
+
+    return (
+      <Badge variant="outline" size="sm" className="flex items-center gap-1 text-slate-400 border-slate-700">
+        <Clock className="w-3 h-3" />
+        Uploaded
+      </Badge>
+    )
   }
 
   if (accessDenied) {
@@ -307,7 +426,8 @@ export const CourseDetailPage: React.FC = () => {
               Upload Learning Materials
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              Upload textbook PDFs, lecture slide decks (PPT/PPTX), or class recordings (MP4).
+              Upload textbook PDFs or lecture slide decks (PPT/PPTX). Text, page numbers, and slide numbers
+              are automatically extracted into structured grounding chunks.
             </p>
           </div>
           <div className="hidden sm:flex items-center gap-2">
@@ -356,10 +476,10 @@ export const CourseDetailPage: React.FC = () => {
 
             <div>
               <p className="text-sm font-semibold text-white">
-                {isUploading ? 'Uploading material to Firebase...' : 'Click to upload or drag & drop files here'}
+                {isUploading ? 'Uploading & Processing Document...' : 'Click to upload or drag & drop files here'}
               </p>
               <p className="text-xs text-slate-500 mt-1">
-                Supports PDF, PPT, PPTX presentations, and MP4 lecture videos (up to 200MB)
+                Supports PDF textbooks, PPT/PPTX lecture slides, and MP4 videos (up to 200MB)
               </p>
             </div>
 
@@ -387,10 +507,10 @@ export const CourseDetailPage: React.FC = () => {
           <div>
             <h3 className="text-lg font-bold text-white flex items-center gap-2">
               <Layers className="w-5 h-5 text-emerald-400" />
-              Indexed Course Materials ({materials.length})
+              Structured Course Materials ({materials.length})
             </h3>
             <p className="text-xs text-slate-400">
-              Files saved in <code className="font-mono text-emerald-300">courses/{course.courseId}/materials</code>
+              Preserves page numbers (PDF) and slide numbers (PPT/PPTX) for exact citation grounding
             </p>
           </div>
         </div>
@@ -411,80 +531,164 @@ export const CourseDetailPage: React.FC = () => {
           </Card>
         ) : (
           <div className="space-y-3">
-            {materials.map((mat) => (
-              <Card
-                key={mat.materialId}
-                hover
-                className="p-4 bg-slate-900/60 border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all duration-200 hover:border-slate-700"
-              >
-                {/* File Icon & Info */}
-                <div className="flex items-start sm:items-center gap-3.5 min-w-0">
-                  <div className="w-11 h-11 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-center shrink-0">
-                    {getTypeIcon(mat.type)}
-                  </div>
+            {materials.map((mat) => {
+              const active = processingStatusMap[mat.materialId]
+              const isProcessing = !!active || mat.processingStatus === 'processing'
+              const isProcessed = mat.processingStatus === 'processed'
+              const isFailed = mat.processingStatus === 'failed'
 
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h4 className="text-sm font-bold text-white truncate max-w-md">
-                        {mat.name}
-                      </h4>
-                      <Badge variant={getTypeBadgeVariant(mat.type)} size="sm">
-                        {mat.type}
-                      </Badge>
-                      <Badge variant="emerald" size="sm">
-                        <CheckCircle2 className="w-3 h-3 mr-0.5 text-emerald-400" />
-                        {mat.processingStatus}
-                      </Badge>
+              return (
+                <Card
+                  key={mat.materialId}
+                  hover
+                  className="p-4 bg-slate-900/60 border-slate-800/80 flex flex-col gap-3 transition-all duration-200 hover:border-slate-700"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    {/* File Icon & Info */}
+                    <div className="flex items-start sm:items-center gap-3.5 min-w-0">
+                      <div className="w-11 h-11 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-center shrink-0">
+                        {getTypeIcon(mat.type)}
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="text-sm font-bold text-white truncate max-w-md">
+                            {mat.name}
+                          </h4>
+                          <Badge variant={getTypeBadgeVariant(mat.type)} size="sm">
+                            {mat.type}
+                          </Badge>
+                          {renderStatusBadge(mat)}
+                        </div>
+
+                        <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
+                          <span>{formatFileSize(mat.fileSizeBytes)}</span>
+                          <span>•</span>
+                          <span>Uploaded {new Date(mat.uploadedAt).toLocaleDateString()}</span>
+                        </div>
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
-                      <span>{formatFileSize(mat.fileSizeBytes)}</span>
-                      <span>•</span>
-                      <span>Uploaded {new Date(mat.uploadedAt).toLocaleDateString()}</span>
-                    </div>
-                  </div>
-                </div>
+                    {/* Actions */}
+                    <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto flex-wrap">
+                      {/* View Chunks Button */}
+                      {(isProcessed || (mat.chunksCount && mat.chunksCount > 0)) && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setViewingChunksMaterial(mat)}
+                          className="text-xs px-3 py-1.5 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+                          leftIcon={<Eye className="w-3.5 h-3.5" />}
+                        >
+                          View Chunks ({mat.chunksCount || 'Inspect'})
+                        </Button>
+                      )}
 
-                {/* Actions */}
-                <div className="flex items-center gap-2.5 shrink-0 self-end sm:self-auto">
-                  {mat.downloadURL && (
-                    <a
-                      href={mat.downloadURL}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex"
-                    >
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="text-xs px-3 py-1.5 border-slate-700 text-slate-300 hover:text-white hover:border-emerald-500/40"
-                        rightIcon={<ExternalLink className="w-3.5 h-3.5" />}
+                      {/* Process / Reprocess Button */}
+                      {!isProcessing && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleProcessMaterial(mat)}
+                          className="text-xs px-2.5 py-1.5 border-slate-700 text-slate-300 hover:text-white hover:border-emerald-500/40"
+                          leftIcon={
+                            isProcessed ? (
+                              <RefreshCw className="w-3.5 h-3.5" />
+                            ) : (
+                              <Play className="w-3.5 h-3.5 text-emerald-400" />
+                            )
+                          }
+                          title={isProcessed ? 'Reprocess Material' : 'Extract Chunks'}
+                        >
+                          {isProcessed ? 'Reprocess' : 'Process Chunks'}
+                        </Button>
+                      )}
+
+                      {/* Open Raw File */}
+                      {mat.downloadURL && (
+                        <a
+                          href={mat.downloadURL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex"
+                        >
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-xs px-2.5 py-1.5 text-slate-400 hover:text-white"
+                            rightIcon={<ExternalLink className="w-3.5 h-3.5" />}
+                          >
+                            File
+                          </Button>
+                        </a>
+                      )}
+
+                      {/* Delete */}
+                      <button
+                        onClick={() =>
+                          handleDeleteMaterial(mat.materialId, mat.storagePath, mat.name)
+                        }
+                        disabled={deletingMaterialId === mat.materialId}
+                        title="Delete Material"
+                        className="p-2 rounded-xl text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
                       >
-                        Open File
-                      </Button>
-                    </a>
+                        {deletingMaterialId === mat.materialId ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-rose-400" />
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Processing Progress Bar */}
+                  {isProcessing && active && (
+                    <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2">
+                      <div className="flex justify-between text-xs text-slate-300">
+                        <span className="flex items-center gap-1.5">
+                          <Loader2 className="w-3 h-3 text-emerald-400 animate-spin" />
+                          {active.stage}
+                        </span>
+                        <span className="font-bold text-emerald-400">{active.percent}%</span>
+                      </div>
+                      <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400 transition-all duration-300"
+                          style={{ width: `${active.percent}%` }}
+                        />
+                      </div>
+                    </div>
                   )}
 
-                  <button
-                    onClick={() =>
-                      handleDeleteMaterial(mat.materialId, mat.storagePath, mat.name)
-                    }
-                    disabled={deletingMaterialId === mat.materialId}
-                    title="Delete Material"
-                    className="p-2 rounded-xl text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-                  >
-                    {deletingMaterialId === mat.materialId ? (
-                      <Loader2 className="w-4 h-4 animate-spin text-rose-400" />
-                    ) : (
-                      <Trash2 className="w-4 h-4" />
-                    )}
-                  </button>
-                </div>
-              </Card>
-            ))}
+                  {/* Error Message if Failed */}
+                  {isFailed && mat.errorMessage && (
+                    <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                        <span>{mat.errorMessage}</span>
+                      </div>
+                      <button
+                        onClick={() => handleProcessMaterial(mat)}
+                        className="font-semibold text-rose-200 underline hover:text-white"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
+                </Card>
+              )
+            })}
           </div>
         )}
       </div>
+
+      {/* Chunk Viewer Modal */}
+      <ChunkViewerModal
+        isOpen={!!viewingChunksMaterial}
+        onClose={() => setViewingChunksMaterial(null)}
+        material={viewingChunksMaterial}
+        courseId={course.courseId}
+      />
     </div>
   )
 }

@@ -1,6 +1,11 @@
 export type CourseMaterialType = 'PDF' | 'PPT' | 'PPTX' | 'MP4'
 
-export type MaterialProcessingStatus = 'ready' | 'pending' | 'indexing' | 'error'
+export type MaterialProcessingStatus =
+  | 'uploaded'
+  | 'processing'
+  | 'processed'
+  | 'failed'
+  | 'ready'
 
 export interface CourseMaterial {
   materialId: string
@@ -12,6 +17,8 @@ export interface CourseMaterial {
   uploadedAt: string
   processingStatus: MaterialProcessingStatus
   fileSizeBytes?: number
+  chunksCount?: number
+  errorMessage?: string
 }
 
 export interface Course {

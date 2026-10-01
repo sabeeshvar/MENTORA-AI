@@ -4,7 +4,9 @@ import {
   getDoc,
   getDocs,
   setDoc,
+  updateDoc,
   deleteDoc,
+  writeBatch,
   query,
   where,
   orderBy,
@@ -14,6 +16,7 @@ import { db, isFirebaseConfigured } from './config'
 import { deleteStorageFile } from './storage'
 import type { UserProfile, LearningStats } from '@/types/auth'
 import type { Course, CourseMaterial, CourseMaterialType, MaterialProcessingStatus } from '@/types/course'
+import type { ProcessedChunk } from '@/types/chunk'
 import type { LearningMaterial } from '@/types/material'
 import type { Quiz, QuizAttempt } from '@/types/quiz'
 import type { TopicMastery } from '@/types/mastery'
@@ -380,6 +383,7 @@ export const deleteCourseMaterial = async (
     const list: CourseMaterial[] = local ? JSON.parse(local) : []
     const updated = list.filter((m) => m.materialId !== materialId)
     localStorage.setItem(`mentora_course_materials_${courseId}`, JSON.stringify(updated))
+    localStorage.removeItem(`mentora_chunks_${courseId}_${materialId}`)
     return
   }
 
@@ -388,9 +392,154 @@ export const deleteCourseMaterial = async (
     await deleteStorageFile(storagePath)
   }
 
+  // Delete chunks subcollection first
+  try {
+    const chunksSnap = await getDocs(
+      collection(db, COLLECTIONS.COURSES, courseId, 'materials', materialId, 'chunks')
+    )
+    if (!chunksSnap.empty) {
+      const batch = writeBatch(db)
+      chunksSnap.docs.forEach((d) => batch.delete(d.ref))
+      await batch.commit()
+    }
+  } catch (err) {
+    console.warn('Could not cleanly delete chunks subcollection:', err)
+  }
+
   // Delete document from Firestore
   const matRef = doc(db, COLLECTIONS.COURSES, courseId, 'materials', materialId)
   await deleteDoc(matRef)
+}
+
+/**
+ * Updates processing status of a course material (uploaded -> processing -> processed | failed)
+ */
+export const updateMaterialProcessingStatus = async (
+  courseId: string,
+  materialId: string,
+  status: MaterialProcessingStatus,
+  extra?: { chunksCount?: number; errorMessage?: string }
+): Promise<void> => {
+  if (!courseId || !materialId) return
+
+  // Update in localStorage cache/fallback
+  const localKey = `mentora_course_materials_${courseId}`
+  const local = localStorage.getItem(localKey)
+  if (local) {
+    try {
+      const list: CourseMaterial[] = JSON.parse(local)
+      const updated = list.map((m) =>
+        m.materialId === materialId
+          ? {
+              ...m,
+              processingStatus: status,
+              ...(extra?.chunksCount !== undefined ? { chunksCount: extra.chunksCount } : {}),
+              ...(extra?.errorMessage !== undefined ? { errorMessage: extra.errorMessage } : {}),
+            }
+          : m
+      )
+      localStorage.setItem(localKey, JSON.stringify(updated))
+    } catch {
+      // Ignore
+    }
+  }
+
+  if (!isFirebaseConfigured()) return
+
+  try {
+    const matRef = doc(db, COLLECTIONS.COURSES, courseId, 'materials', materialId)
+    const updatePayload: Record<string, any> = { processingStatus: status }
+    if (extra?.chunksCount !== undefined) {
+      updatePayload.chunksCount = extra.chunksCount
+    }
+    if (extra?.errorMessage !== undefined) {
+      updatePayload.errorMessage = extra.errorMessage
+    }
+    await updateDoc(matRef, updatePayload)
+  } catch (err) {
+    console.warn(`Could not update material ${materialId} status to ${status} in Firestore:`, err)
+  }
+}
+
+/**
+ * Stores processed chunks in Firestore subcollection:
+ * courses/{courseId}/materials/{materialId}/chunks/{chunkId}
+ */
+export const saveMaterialChunks = async (
+  courseId: string,
+  materialId: string,
+  chunks: ProcessedChunk[]
+): Promise<void> => {
+  if (!courseId || !materialId || !chunks) return
+
+  // Always cache locally for instant UI responsiveness and offline fallback
+  const cacheKey = `mentora_chunks_${courseId}_${materialId}`
+  localStorage.setItem(cacheKey, JSON.stringify(chunks))
+
+  if (!isFirebaseConfigured()) return
+
+  try {
+    // Firestore batch limit is 500 writes
+    const CHUNK_BATCH_SIZE = 400
+    for (let i = 0; i < chunks.length; i += CHUNK_BATCH_SIZE) {
+      const slice = chunks.slice(i, i + CHUNK_BATCH_SIZE)
+      const batch = writeBatch(db)
+
+      for (const chunk of slice) {
+        const chunkDocRef = doc(
+          db,
+          COLLECTIONS.COURSES,
+          courseId,
+          'materials',
+          materialId,
+          'chunks',
+          chunk.chunkId
+        )
+        batch.set(chunkDocRef, chunk)
+      }
+
+      await batch.commit()
+    }
+  } catch (err) {
+    console.warn('Could not save chunks to Firestore subcollection, saved to local cache:', err)
+  }
+}
+
+/**
+ * Retrieves all processed chunks for a material, ordered by chunkIndex
+ */
+export const getMaterialChunks = async (
+  courseId: string,
+  materialId: string
+): Promise<ProcessedChunk[]> => {
+  if (!courseId || !materialId) return []
+
+  const cacheKey = `mentora_chunks_${courseId}_${materialId}`
+
+  if (!isFirebaseConfigured()) {
+    const local = localStorage.getItem(cacheKey)
+    return local ? JSON.parse(local) : []
+  }
+
+  try {
+    const q = query(
+      collection(db, COLLECTIONS.COURSES, courseId, 'materials', materialId, 'chunks'),
+      orderBy('chunkIndex', 'asc')
+    )
+    const snap = await getDocs(q)
+    if (!snap.empty) {
+      const chunks = snap.docs.map((d) => d.data() as ProcessedChunk)
+      // Refresh local cache
+      localStorage.setItem(cacheKey, JSON.stringify(chunks))
+      return chunks
+    }
+  } catch (err) {
+    console.warn('Failed to query chunks from Firestore, checking local cache:', err)
+  }
+
+  // Fallback to local cache if Firestore returned empty or failed
+  const fallback = localStorage.getItem(cacheKey)
+  return fallback ? JSON.parse(fallback) : []
 }
 
 // ==========================================
