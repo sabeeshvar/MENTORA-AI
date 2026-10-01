@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   Sparkles,
@@ -25,6 +25,7 @@ import {
   RecommendationCard,
   type RecommendationItem,
 } from '@/components/dashboard/RecommendationCard'
+import { getUserCourses } from '@/lib/firebase/firestore'
 
 export const DashboardPage: React.FC = () => {
   const { user } = useAuth()
@@ -170,8 +171,37 @@ export const DashboardPage: React.FC = () => {
     totalConcepts: 40,
   }
 
-  // Active dataset depending on reviewer toggle
-  const courses = showEmptyState ? [] : defaultCourses
+  // Real user courses from Firestore
+  const [realCourses, setRealCourses] = useState<CourseData[]>([])
+
+  useEffect(() => {
+    if (!user) return
+    getUserCourses(user.uid)
+      .then((data) => {
+        if (data.length > 0) {
+          setRealCourses(
+            data.map((c) => ({
+              id: c.courseId,
+              title: c.title,
+              code: c.subject.slice(0, 6).toUpperCase(),
+              category: c.subject,
+              progress: 65,
+              materialsCount: c.materialsCount ?? 0,
+              lastStudied: new Date(c.updatedAt).toLocaleDateString(),
+              topics: [c.subject, 'Coursework'],
+            }))
+          )
+        }
+      })
+      .catch(() => {})
+  }, [user])
+
+  // Active dataset depending on reviewer toggle and saved courses
+  const courses = showEmptyState
+    ? []
+    : realCourses.length > 0
+    ? realCourses
+    : defaultCourses
   const weakTopics = showEmptyState ? [] : defaultWeakTopics
   const recentQuizzes = showEmptyState ? [] : defaultRecentQuizzes
   const recommendations = showEmptyState ? [] : defaultRecommendations
@@ -476,7 +506,7 @@ export const DashboardPage: React.FC = () => {
               <CourseCard
                 key={course.id}
                 course={course}
-                onContinue={() => navigate(`/study`)}
+                onContinue={() => navigate(`/courses/${course.id}`)}
               />
             ))}
           </div>

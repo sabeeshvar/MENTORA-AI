@@ -7,6 +7,7 @@ import { RegisterPage } from '@/pages/RegisterPage'
 import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { MaterialsPage } from '@/pages/MaterialsPage'
+import { CourseDetailPage } from '@/pages/CourseDetailPage'
 import { StudyPage } from '@/pages/StudyPage'
 import { QuizzesPage } from '@/pages/QuizzesPage'
 import { MasteryPage } from '@/pages/MasteryPage'
@@ -43,6 +44,10 @@ export const router = createBrowserRouter([
       {
         path: '/courses',
         element: <MaterialsPage />,
+      },
+      {
+        path: '/courses/:courseId',
+        element: <CourseDetailPage />,
       },
       {
         path: '/materials',

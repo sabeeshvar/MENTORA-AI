@@ -3,10 +3,29 @@ import { getAuth, type Auth } from 'firebase/auth'
 import { getFirestore, type Firestore } from 'firebase/firestore'
 import { getStorage, type FirebaseStorage } from 'firebase/storage'
 
+// Universal environment variable resolver (supports both Vite client and Node.js test runners)
+const getEnvVar = (key: string, defaultValue = ''): string => {
+  try {
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
+      return import.meta.env[key]
+    }
+  } catch {
+    // Ignore
+  }
+  try {
+    if (typeof process !== 'undefined' && process.env && process.env[key]) {
+      return process.env[key]
+    }
+  } catch {
+    // Ignore
+  }
+  return defaultValue
+}
+
 // Check if Firebase is properly configured with real credentials
 export const isFirebaseConfigured = (): boolean => {
-  const apiKey = import.meta.env.VITE_FIREBASE_API_KEY
-  const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID
+  const apiKey = getEnvVar('VITE_FIREBASE_API_KEY')
+  const projectId = getEnvVar('VITE_FIREBASE_PROJECT_ID')
   return Boolean(
     apiKey &&
     apiKey.trim() !== '' &&
@@ -18,12 +37,12 @@ export const isFirebaseConfigured = (): boolean => {
 }
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyDemoPlaceholderKey1234567890',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'mentora-ai.firebaseapp.com',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'mentora-ai',
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'mentora-ai.appspot.com',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '1234567890',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:1234567890:web:mockappid',
+  apiKey: getEnvVar('VITE_FIREBASE_API_KEY', 'AIzaSyDemoPlaceholderKey1234567890'),
+  authDomain: getEnvVar('VITE_FIREBASE_AUTH_DOMAIN', 'mentora-ai.firebaseapp.com'),
+  projectId: getEnvVar('VITE_FIREBASE_PROJECT_ID', 'mentora-ai'),
+  storageBucket: getEnvVar('VITE_FIREBASE_STORAGE_BUCKET', 'mentora-ai.appspot.com'),
+  messagingSenderId: getEnvVar('VITE_FIREBASE_MESSAGING_SENDER_ID', '1234567890'),
+  appId: getEnvVar('VITE_FIREBASE_APP_ID', '1:1234567890:web:mockappid'),
 }
 
 let app: FirebaseApp
