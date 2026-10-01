@@ -1,18 +1,12 @@
 import { Router, Request, Response } from 'express'
-import Groq from 'groq-sdk'
 import { serverConfig } from '../config'
+import { queryGroqTutor } from '../services/groqService'
 
 export const groqRouter = Router()
 
-// Safe lazy initialization of Groq client
-const getGroqClient = () => {
-  if (!serverConfig.groqApiKey) {
-    return null
-  }
-  return new Groq({ apiKey: serverConfig.groqApiKey })
-}
-
-// Status check for Groq AI service
+/**
+ * Status check for Groq AI service configuration
+ */
 groqRouter.get('/status', (_req: Request, res: Response) => {
   res.json({
     configured: serverConfig.isGroqConfigured,
@@ -20,36 +14,50 @@ groqRouter.get('/status', (_req: Request, res: Response) => {
   })
 })
 
-// Grounded Query Endpoint skeleton (ready for full pipeline in subsequent tasks)
-groqRouter.post('/grounded-query', async (req: Request, res: Response) => {
-  if (!serverConfig.isGroqConfigured) {
-    return res.status(503).json({
-      error: 'GROQ_API_KEY is not configured in the environment (.env). Please set your Groq key.',
+/**
+ * MENTORA AI Source-Grounded Tutor Endpoint:
+ *
+ * Student question
+ * -> retrieve relevant course chunks
+ * -> construct grounded context
+ * -> send context + question to Groq
+ * -> receive answer
+ * -> return answer + source citations
+ */
+groqRouter.post('/tutor', async (req: Request, res: Response) => {
+  const { question, chunks, courseTitle, conversationHistory } = req.body
+
+  if (!question || typeof question !== 'string' || question.trim().length === 0) {
+    return res.status(400).json({
+      error: 'Question is required and must be a non-empty string.',
     })
   }
 
-  const { prompt } = req.body
-  if (!prompt) {
-    return res.status(400).json({ error: 'Missing prompt parameter' })
+  if (!serverConfig.isGroqConfigured) {
+    return res.status(503).json({
+      error:
+        'GROQ_API_KEY is not configured on the server. Please set GROQ_API_KEY in your server environment or .env file to enable live AI tutor queries.',
+      configured: false,
+    })
   }
 
   try {
-    const groq = getGroqClient()
-    if (!groq) {
-      return res.status(500).json({ error: 'Groq client failed to initialize' })
-    }
-
-    const completion = await groq.chat.completions.create({
-      messages: [{ role: 'user', content: prompt }],
-      model: 'llama-3.3-70b-versatile',
+    const chunkList = Array.isArray(chunks) ? chunks : []
+    const response = await queryGroqTutor({
+      question: question.trim(),
+      chunks: chunkList,
+      courseTitle: typeof courseTitle === 'string' ? courseTitle : undefined,
+      conversationHistory: Array.isArray(conversationHistory) ? conversationHistory : undefined,
     })
 
-    return res.json({
-      response: completion.choices[0]?.message?.content || '',
-      model: 'llama-3.3-70b-versatile',
+    return res.json(response)
+  } catch (error: any) {
+    console.error('Groq Tutor inference error:', error)
+    const status = error?.status || 500
+    const msg = error?.message || 'Failed to process question with Groq AI'
+    return res.status(status).json({
+      error: msg,
+      details: error?.error?.message || undefined,
     })
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error during inference'
-    return res.status(500).json({ error: message })
   }
 })
