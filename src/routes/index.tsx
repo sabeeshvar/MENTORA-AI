@@ -12,6 +12,9 @@ import { StudyPage } from '@/pages/StudyPage'
 import { QuizzesPage } from '@/pages/QuizzesPage'
 import { MasteryPage } from '@/pages/MasteryPage'
 import { SettingsPage } from '@/pages/SettingsPage'
+import { KnowledgeMapPage } from '@/pages/KnowledgeMapPage'
+import { RecommendationsPage } from '@/pages/RecommendationsPage'
+import { EvaluationPage } from '@/pages/EvaluationPage'
 
 export const router = createBrowserRouter([
   {
@@ -83,7 +86,15 @@ export const router = createBrowserRouter([
       },
       {
         path: '/recommendations',
-        element: <DashboardPage />,
+        element: <RecommendationsPage />,
+      },
+      {
+        path: '/knowledge-map',
+        element: <KnowledgeMapPage />,
+      },
+      {
+        path: '/evaluation',
+        element: <EvaluationPage />,
       },
       {
         path: '/profile',

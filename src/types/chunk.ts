@@ -9,11 +9,16 @@ export interface ProcessedChunk {
   sourceName: string
   pageNumber?: number
   slideNumber?: number
+  startTimestamp?: string
+  endTimestamp?: string
   sectionTitle: string
   chunkIndex: number
   createdAt: string
   charCount?: number
   wordCount?: number
+  embedding?: number[]
+  embeddingModel?: string
+  similarityScore?: number
 }
 
 export interface MaterialExtractionSummary {

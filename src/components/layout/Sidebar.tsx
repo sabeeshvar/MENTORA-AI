@@ -12,6 +12,8 @@ import {
   LogOut,
   BrainCircuit,
   GraduationCap,
+  Network,
+  BarChart3,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { cn } from '@/lib/utils'
@@ -36,6 +38,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
     { label: 'Quiz', to: '/quiz', icon: Award },
     { label: 'Progress', to: '/progress', icon: TrendingUp },
     { label: 'Recommendations', to: '/recommendations', icon: Compass },
+    { label: 'Knowledge Map', to: '/knowledge-map', icon: Network },
+    { label: 'Evaluation', to: '/evaluation', icon: BarChart3 },
     { label: 'Profile', to: '/profile', icon: User },
     { label: 'Settings', to: '/settings', icon: Settings },
   ]

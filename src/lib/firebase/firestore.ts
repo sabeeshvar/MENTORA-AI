@@ -19,7 +19,7 @@ import type { Course, CourseMaterial, CourseMaterialType, MaterialProcessingStat
 import type { ProcessedChunk } from '@/types/chunk'
 import type { LearningMaterial } from '@/types/material'
 import type { Quiz, QuizAttempt } from '@/types/quiz'
-import type { TopicMastery } from '@/types/mastery'
+import type { TopicMastery, PersonalizedRecommendation } from '@/types/mastery'
 
 // Collection references
 export const COLLECTIONS = {
@@ -570,36 +570,237 @@ export const saveMaterial = async (material: LearningMaterial): Promise<void> =>
 }
 
 // ==========================================
-// 5. Quiz & Mastery Helpers
+// 5. Schema: users/{uid}/mastery/{topicId}
 // ==========================================
-export const getQuizzesForTopic = async (userId: string, topic?: string): Promise<Quiz[]> => {
-  if (!isFirebaseConfigured()) {
-    const local = localStorage.getItem(`mentora_quizzes_${userId}`)
-    const all: Quiz[] = local ? JSON.parse(local) : []
-    return topic ? all.filter((q) => q.topic.toLowerCase() === topic.toLowerCase()) : all
+
+export const saveTopicMastery = async (mastery: TopicMastery): Promise<void> => {
+  if (!mastery.userId || !mastery.topicId) return
+
+  const localKey = `mentora_mastery_${mastery.userId}`
+  const local = localStorage.getItem(localKey)
+  const existing: TopicMastery[] = local ? JSON.parse(local) : []
+  const updated = [mastery, ...existing.filter((m) => m.topicId !== mastery.topicId)]
+  localStorage.setItem(localKey, JSON.stringify(updated))
+
+  if (!isFirebaseConfigured()) return
+
+  try {
+    const masteryRef = doc(db, COLLECTIONS.USERS, mastery.userId, 'mastery', mastery.topicId)
+    await setDoc(masteryRef, mastery, { merge: true })
+  } catch (err) {
+    console.warn('Error persisting topic mastery to Firestore:', err)
   }
-  const q = query(collection(db, COLLECTIONS.QUIZZES), where('userId', '==', userId))
-  const snap = await getDocs(q)
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Quiz)
 }
 
-export const saveQuizAttempt = async (attempt: QuizAttempt): Promise<void> => {
-  if (!isFirebaseConfigured()) {
-    const key = `mentora_attempts_${attempt.userId}`
-    const local = localStorage.getItem(key)
-    const all: QuizAttempt[] = local ? JSON.parse(local) : []
-    localStorage.setItem(key, JSON.stringify([attempt, ...all]))
-    return
-  }
-  await setDoc(doc(db, COLLECTIONS.QUIZ_ATTEMPTS, attempt.id), attempt)
-}
+export const getUserTopicMasteries = async (userId: string): Promise<TopicMastery[]> => {
+  if (!userId) return []
 
-export const getUserMastery = async (userId: string): Promise<TopicMastery[]> => {
+  const localKey = `mentora_mastery_${userId}`
   if (!isFirebaseConfigured()) {
-    const local = localStorage.getItem(`mentora_mastery_${userId}`)
+    const local = localStorage.getItem(localKey)
     return local ? JSON.parse(local) : []
   }
-  const q = query(collection(db, COLLECTIONS.MASTERY), where('userId', '==', userId))
-  const snap = await getDocs(q)
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as TopicMastery)
+
+  try {
+    const q = collection(db, COLLECTIONS.USERS, userId, 'mastery')
+    const snap = await getDocs(q)
+    if (!snap.empty) {
+      const data = snap.docs.map((d) => d.data() as TopicMastery)
+      localStorage.setItem(localKey, JSON.stringify(data))
+      return data
+    }
+  } catch (err) {
+    console.warn('Error fetching user topic masteries from Firestore:', err)
+  }
+
+  const local = localStorage.getItem(localKey)
+  return local ? JSON.parse(local) : []
 }
+
+export const getUserMastery = getUserTopicMasteries
+
+export const getTopicMastery = async (userId: string, topicId: string): Promise<TopicMastery | null> => {
+  if (!userId || !topicId) return null
+  const all = await getUserTopicMasteries(userId)
+  return all.find((m) => m.topicId === topicId) || null
+}
+
+// ==========================================
+// 6. Schema: users/{uid}/quizAttempts/{attemptId}
+// ==========================================
+
+export const saveUserQuizAttempt = async (attempt: QuizAttempt): Promise<void> => {
+  if (!attempt.userId || !attempt.attemptId) return
+
+  const localKey = `mentora_attempts_${attempt.userId}`
+  const local = localStorage.getItem(localKey)
+  const existing: QuizAttempt[] = local ? JSON.parse(local) : []
+  localStorage.setItem(localKey, JSON.stringify([attempt, ...existing]))
+
+  if (!isFirebaseConfigured()) return
+
+  try {
+    const attemptRef = doc(db, COLLECTIONS.USERS, attempt.userId, 'quizAttempts', attempt.attemptId)
+    await setDoc(attemptRef, attempt)
+  } catch (err) {
+    console.warn('Error saving quiz attempt to Firestore:', err)
+  }
+}
+
+export const saveQuizAttempt = saveUserQuizAttempt
+
+export const getUserQuizAttempts = async (userId: string, courseId?: string): Promise<QuizAttempt[]> => {
+  if (!userId) return []
+
+  const localKey = `mentora_attempts_${userId}`
+  if (!isFirebaseConfigured()) {
+    const local = localStorage.getItem(localKey)
+    const all: QuizAttempt[] = local ? JSON.parse(local) : []
+    return courseId ? all.filter((a) => a.courseId === courseId) : all
+  }
+
+  try {
+    const q = query(
+      collection(db, COLLECTIONS.USERS, userId, 'quizAttempts'),
+      orderBy('completedAt', 'desc')
+    )
+    const snap = await getDocs(q)
+    if (!snap.empty) {
+      const data = snap.docs.map((d) => d.data() as QuizAttempt)
+      localStorage.setItem(localKey, JSON.stringify(data))
+      return courseId ? data.filter((a) => a.courseId === courseId) : data
+    }
+  } catch (err) {
+    console.warn('Error fetching quiz attempts from Firestore:', err)
+  }
+
+  const local = localStorage.getItem(localKey)
+  const all: QuizAttempt[] = local ? JSON.parse(local) : []
+  return courseId ? all.filter((a) => a.courseId === courseId) : all
+}
+
+// ==========================================
+// 7. Schema: users/{uid}/recommendations/{recommendationId}
+// ==========================================
+
+export const saveUserRecommendations = async (
+  userId: string,
+  recs: PersonalizedRecommendation[]
+): Promise<void> => {
+  if (!userId) return
+
+  const localKey = `mentora_recs_${userId}`
+  localStorage.setItem(localKey, JSON.stringify(recs))
+
+  if (!isFirebaseConfigured()) return
+
+  try {
+    const batch = writeBatch(db)
+    for (const rec of recs) {
+      const ref = doc(db, COLLECTIONS.USERS, userId, 'recommendations', rec.recommendationId)
+      batch.set(ref, rec)
+    }
+    await batch.commit()
+  } catch (err) {
+    console.warn('Error saving recommendations to Firestore:', err)
+  }
+}
+
+export const getUserRecommendations = async (userId: string): Promise<PersonalizedRecommendation[]> => {
+  if (!userId) return []
+
+  const localKey = `mentora_recs_${userId}`
+  if (!isFirebaseConfigured()) {
+    const local = localStorage.getItem(localKey)
+    return local ? JSON.parse(local) : []
+  }
+
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.USERS, userId, 'recommendations'))
+    if (!snap.empty) {
+      const data = snap.docs.map((d) => d.data() as PersonalizedRecommendation)
+      localStorage.setItem(localKey, JSON.stringify(data))
+      return data
+    }
+  } catch (err) {
+    console.warn('Error fetching recommendations from Firestore:', err)
+  }
+
+  const local = localStorage.getItem(localKey)
+  return local ? JSON.parse(local) : []
+}
+
+// ==========================================
+// 8. Schema: quizzes/{quizId}
+// ==========================================
+
+export const saveQuiz = async (quiz: Quiz): Promise<void> => {
+  if (!quiz.quizId) return
+
+  const localKey = `mentora_quiz_${quiz.quizId}`
+  localStorage.setItem(localKey, JSON.stringify(quiz))
+
+  const userQuizzesKey = `mentora_quizzes_${quiz.userId}`
+  const userQuizzesLocal = localStorage.getItem(userQuizzesKey)
+  const existing: Quiz[] = userQuizzesLocal ? JSON.parse(userQuizzesLocal) : []
+  localStorage.setItem(userQuizzesKey, JSON.stringify([quiz, ...existing.filter((q) => q.quizId !== quiz.quizId)]))
+
+  if (!isFirebaseConfigured()) return
+
+  try {
+    await setDoc(doc(db, COLLECTIONS.QUIZZES, quiz.quizId), quiz)
+  } catch (err) {
+    console.warn('Error saving quiz to Firestore:', err)
+  }
+}
+
+export const getQuizById = async (quizId: string): Promise<Quiz | null> => {
+  if (!quizId) return null
+
+  if (!isFirebaseConfigured()) {
+    const local = localStorage.getItem(`mentora_quiz_${quizId}`)
+    return local ? JSON.parse(local) : null
+  }
+
+  try {
+    const snap = await getDoc(doc(db, COLLECTIONS.QUIZZES, quizId))
+    if (snap.exists()) {
+      return snap.data() as Quiz
+    }
+  } catch (err) {
+    console.warn('Error fetching quiz from Firestore:', err)
+  }
+
+  const local = localStorage.getItem(`mentora_quiz_${quizId}`)
+  return local ? JSON.parse(local) : null
+}
+
+export const getCourseQuizzes = async (userId: string, courseId?: string): Promise<Quiz[]> => {
+  if (!userId) return []
+
+  const localKey = `mentora_quizzes_${userId}`
+  if (!isFirebaseConfigured()) {
+    const local = localStorage.getItem(localKey)
+    const list: Quiz[] = local ? JSON.parse(local) : []
+    return courseId ? list.filter((q) => q.courseId === courseId) : list
+  }
+
+  try {
+    const q = courseId
+      ? query(collection(db, COLLECTIONS.QUIZZES), where('courseId', '==', courseId))
+      : query(collection(db, COLLECTIONS.QUIZZES), where('userId', '==', userId))
+    const snap = await getDocs(q)
+    return snap.docs.map((d) => d.data() as Quiz)
+  } catch (err) {
+    console.warn('Error fetching quizzes from Firestore:', err)
+    const local = localStorage.getItem(localKey)
+    const list: Quiz[] = local ? JSON.parse(local) : []
+    return courseId ? list.filter((q) => q.courseId === courseId) : list
+  }
+}
+
+export const getQuizzesForTopic = async (userId: string, topic?: string): Promise<Quiz[]> => {
+  const all = await getCourseQuizzes(userId)
+  return topic ? all.filter((q) => q.topic.toLowerCase() === topic.toLowerCase()) : all
+}
+

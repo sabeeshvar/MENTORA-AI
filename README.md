@@ -1,152 +1,209 @@
-# MENTORA AI — Multimodal, Source-Grounded & Adaptive AI Learning Companion
+# MENTORA AI — A Multimodal, Source-Grounded & Adaptive AI Learning Companion
 
-> **Tagline:** Learn. Adapt. Master.
-
-MENTORA AI is a production-quality web platform that transforms raw learning materials (PDF textbooks, PPT/PPTX slide decks, and lecture recordings) into an interactive, source-grounded mastery engine. Students receive answers with precise page citations, take adaptive quizzes calibrated to their weak points, and track their topic mastery in real time.
-
----
-
-## 🏗️ System Architecture
-
-```
-                       ┌─────────────────────────┐
-                       │     MENTORA Web App     │
-                       │  (React 19 + TypeScript │
-                       │    + Vite + Tailwind)   │
-                       └───────────┬─────────────┘
-                                   │
-                ┌──────────────────┴──────────────────┐
-                │                                     │
-      [Client SDK Services]                  [Node.js / Express API]
-                │                                     │
-    ┌───────────┼───────────┐                         │
-    ▼           ▼           ▼                         ▼
-Firebase    Firebase    Firebase                Groq AI Engine
-  Auth      Firestore    Storage             (LLaMA 3.3 70B Versatile)
- (Users)    (Docs/      (PDF/PPTX/             (Fast Grounded Q&A
-             Quizzes)     Videos)               & Adaptive Quizzes)
-```
-
-### Key Pillars
-1. **Multimodal Ingestion Pipeline:** Supports PDFs, PowerPoint presentations, and lecture video transcripts.
-2. **Strict Source Grounding:** Prevents hallucinations by bounding AI responses to indexed chunks, returning exact page numbers, slide indices, or video timestamps.
-3. **Adaptive Quiz Generation:** Generates diagnostic assessments that adjust difficulty dynamically based on the learner's live mastery score.
-4. **Mastery & Knowledge Analytics:** Continuously maps the student's mastery percentage, isolates conceptual weak areas, and prescribes high-yield remedial steps.
+> **Tagline:** Learn. Adapt. Master.  
+> **Hackathon Track:** Personalized Tutoring & Adaptive Learning  
+> **Repository:** [https://github.com/sabeeshvar/MENTORA-AI.git](https://github.com/sabeeshvar/MENTORA-AI.git)
 
 ---
 
-## 🛠️ Technology Stack
+## 1. Project Overview & Problem Statement
+Modern students often struggle with passive, fragmented study tools that fail to personalize explanations, hallucinate facts, or lack connection to actual course syllabi. When students ask questions to standard generic chatbots, answers are ungrounded, lack exact textbook page citations, and cannot adapt to individual learner mastery.
 
-| Layer | Technology | Purpose |
-|---|---|---|
-| **Frontend** | React 19 + TypeScript | High-performance reactive UI |
-| **Build Tool** | Vite 6 | Instant HMR and optimized production bundles |
-| **Styling** | Tailwind CSS v4 | Curated dark mode, glassmorphism, responsive styling |
-| **Icons** | Lucide React | Modern, cohesive iconography |
-| **Routing** | React Router v7 | Declarative routing with protected guards |
-| **Auth & DB** | Firebase (Auth + Firestore + Storage) | Scalable user authentication, cloud database, and file storage |
-| **Backend/API** | Node.js + Express + TypeScript (`tsx`) | Modular API server for AI pipelines and integrations |
-| **AI Engine** | Groq SDK (`llama-3.3-70b-versatile`) | Ultra-fast inference for source-grounded Q&A |
+**MENTORA AI** solves this by turning raw course learning materials (PDF textbooks, PPT/PPTX slides, and lecture video transcripts) into a source-grounded, adaptive learning companion. Every answer is bound strictly to course context with verified page numbers, slide indices, and video timestamps. Real-time quiz evaluations continuously update topic-level mastery in Firebase Firestore and prescribe data-driven personalized recommendations.
 
 ---
 
-## 📁 Repository Structure
+## 2. Core Solution & Features
+- **Multimodal Learning Material Processing:** Ingestion pipeline preserving page numbers, slide indices, and video timestamps.
+- **Source-Grounded AI Tutor:** Bounded RAG inference using Groq LLaMA 3.3 70B with visible `GROUNDED` or `INSUFFICIENT COURSE EVIDENCE` status.
+- **Adaptive Quiz Generation:** Generates MCQ, Short Answer, and Numerical questions directly supported by retrieved course chunks.
+- **Pedagogical Wrong Answer Remedies:** Immediate 6-point breakdown (correct concept, why incorrect, simple explanation, concrete example, source citation, follow-up question) and interactive buttons (*Explain Simply*, *Give an Example*, *Ask Me a Follow-up*).
+- **Mastery Engine:** Dampened exponential scoring tracking topic-level mastery across *Needs Attention* (0–39%), *Developing* (40–69%), *Good* (70–84%), and *Mastered* (85–100%).
+- **Interactive Course Knowledge Map:** Hierarchical tree (`Course -> Module -> Topic -> Subtopic -> Concept`) with node inspection and direct adaptive study actions.
+- **Personalized Recommendations:** Data-driven study prescriptions (*REVISION*, *QUIZ*, *READ*, *PRACTICE*, *ADVANCE*) with actual learner diagnostics.
+- **Real Progress Analytics:** Un-fabricated live Firebase metrics for mastery curves, quiz accuracy, and activity streaks.
+- **Hackathon Demo Mode:** Clearly labelled toggle preloaded with demo course data for judges to test the complete 3–5 minute loop instantly.
 
-```
-MENTORA AI/
-├── .env.example              # Template for environment variables
-├── .env                      # Local environment configurations
-├── .gitignore                # Git exclusions
-├── index.html                # HTML entrypoint with metadata and fonts
-├── package.json              # Unified dependencies & scripts
-├── tsconfig.json             # Root TypeScript project references
-├── tsconfig.app.json         # Client TypeScript configuration
-├── tsconfig.node.json        # Server/Node TypeScript configuration
-├── vite.config.ts            # Vite configuration with Tailwind v4 & aliases
-│
-├── src/                      # Frontend Application
-│   ├── assets/               # Static assets
-│   ├── components/           # Reusable components
-│   │   ├── common/           # Button, Card, Badge, ProtectedRoute
-│   │   └── layout/           # AppLayout, Sidebar, Header
-│   ├── context/              # React Context (AuthContext)
-│   ├── lib/                  # Utilities & Firebase integrations
-│   │   ├── firebase/         # auth.ts, firestore.ts, storage.ts, config.ts
-│   │   └── utils.ts          # Styling and formatting helpers
-│   ├── pages/                # Application routes
-│   │   ├── LandingPage.tsx   # Public showcase & value proposition
-│   │   ├── LoginPage.tsx     # Firebase Auth & Reviewer Demo Mode
-│   │   ├── DashboardPage.tsx # Overview & Quick Actions
-│   │   ├── MaterialsPage.tsx # Multimodal upload hub & file library
-│   │   ├── StudyPage.tsx     # Grounded Q&A split-view with citations
-│   │   ├── QuizzesPage.tsx   # Adaptive quiz generator & practice
-│   │   ├── MasteryPage.tsx   # Topic mastery & analytics breakdown
-│   │   └── SettingsPage.tsx  # User profile & service connection status
-│   ├── routes/               # Centralized router configuration
-│   ├── types/                # Strict TypeScript data models
-│   │   ├── auth.ts
-│   │   ├── material.ts
-│   │   ├── quiz.ts
-│   │   └── mastery.ts
-│   ├── App.tsx               # Root component with providers
-│   ├── main.tsx              # React DOM mounting
-│   └── index.css             # Tailwind v4 theme & glassmorphic utilities
-│
-└── server/                   # Backend API (Node.js + Express + TypeScript)
-    ├── config.ts             # Environment validation (Port, Groq Key)
-    ├── routes/               # Modular Express routers
-    │   ├── health.ts         # Service status & environment health
-    │   └── groq.ts           # Groq AI inference endpoints
-    └── index.ts              # Server bootstrap & middleware
+---
+
+## 3. High-Level System Architecture
+
+```mermaid
+graph TD
+    Client["React 19 + TypeScript + Vite Frontend"] --> Auth["Firebase Authentication"]
+    Client --> Storage["Firebase Storage (PDF/PPTX/Video)"]
+    Client --> Firestore["Firebase Firestore (Real DB)"]
+    Client --> Backend["Node.js / Express API Server"]
+    Backend --> Retrieval["Dense Semantic Vector Retrieval"]
+    Backend --> GroqAI["Groq AI Engine (LLaMA 3.3 70B Versatile)"]
+    Firestore --> Mastery["Mastery & Recommendation Engine"]
 ```
 
 ---
 
-## 🚀 Getting Started
+## 4. Multimodal Document Processing Pipeline
 
-### 1. Prerequisites
-- **Node.js**: v18.0.0 or higher (Tested on v24.x)
-- **npm**: v9.0.0 or higher
+```mermaid
+flowchart LR
+    A[Upload Material] --> B[Validate Format & Size]
+    B --> C[Extract Text & Metadata]
+    C --> D[Preserve Page/Slide/Timestamp]
+    D --> E[Chunk & Structure Content]
+    E --> F[Generate Dense Embeddings]
+    F --> G[Index in Course Vector Store]
+    G --> H[Ready for Grounded AI]
+```
 
-### 2. Installation
+---
+
+## 5. Retrieval-Augmented Generation (RAG) Architecture
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Student
+    participant UI as MENTORA Frontend
+    participant Server as Backend API (/api/groq/tutor)
+    participant Store as Vector Store (courseId partitioned)
+    participant Groq as Groq LLaMA 3.3 70B
+
+    Student->>UI: Ask Question
+    UI->>Server: Query + CourseId
+    Server->>Store: Dense Vector Search (top-K chunks)
+    Store-->>Server: Top Ranked Relevant Chunks
+    alt Evidence Found
+        Server->>Groq: Strict Grounded Prompt + Retrieved Context
+        Groq-->>Server: Answer + Source Citations + Confidence
+        Server-->>UI: Grounded Answer + Citations
+        UI-->>Student: Display [GROUNDED] + Page/Slide Citations
+    else Insufficient Evidence
+        Server-->>UI: Insufficient Course Evidence Message
+        UI-->>Student: Display [INSUFFICIENT COURSE EVIDENCE]
+    end
+```
+
+---
+
+## 6. Adaptive Learning Loop
+
+```mermaid
+graph TD
+    L[Learn Material] --> A[Ask Grounded Tutor]
+    A --> Q[Generate Adaptive Quiz]
+    Q --> E[Answer Evaluation]
+    E --> M[Update Topic Mastery]
+    M --> W[Diagnose Weak Topics]
+    W --> R[Personalized Recommendation]
+    R --> L
+```
+
+---
+
+## 7. Firebase Firestore Schema
+
+- `users/{uid}`: Profile, authentication identity, streak, and aggregate stats.
+- `courses/{courseId}`: Course title, subject, ownerId, metadata.
+- `courses/{courseId}/materials/{materialId}`: Uploaded file records and status.
+- `courses/{courseId}/materials/{materialId}/chunks/{chunkId}`: Knowledge chunks with `pageNumber`, `slideNumber`, `startTimestamp`, `endTimestamp`.
+- `users/{uid}/mastery/{topicId}`: Topic mastery score (0.0 to 1.0), attempts, errors, trend, difficulty level.
+- `users/{uid}/quizAttempts/{attemptId}`: Completed quiz score, accuracy %, timestamp, detailed results.
+- `users/{uid}/recommendations/{recId}`: Active personalized learning recommendations.
+- `quizzes/{quizId}`: Generated grounded quiz definitions.
+
+---
+
+## 8. Technology Stack
+
+- **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, React Router v7, Lucide React
+- **Backend:** Node.js, Express, TypeScript (`tsx`)
+- **AI Inference:** Groq SDK (`llama-3.3-70b-versatile`)
+- **Database & Auth:** Firebase Firestore, Firebase Authentication, Firebase Storage
+- **Security:** `firestore.rules`, `storage.rules`, Server-side Groq API key isolation
+
+---
+
+## 9. Local Development Setup
+
+### Prerequisites
+- Node.js (v18+)
+- npm or yarn
+- Groq API Key ([console.groq.com](https://console.groq.com))
+- Firebase Project configuration
+
+### 1. Clone Repository & Install Dependencies
 ```bash
+git clone https://github.com/sabeeshvar/MENTORA-AI.git
+cd MENTORA-AI
 npm install
 ```
 
-### 3. Environment Variables
-Copy `.env.example` to `.env` and provide your credentials:
-```bash
-cp .env.example .env
+### 2. Configure Environment Variables
+Create `.env` using `.env.example`:
+```env
+# Client - Firebase Web Configuration
+VITE_FIREBASE_API_KEY=your_firebase_api_key
+VITE_FIREBASE_AUTH_DOMAIN=your-app.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=your-project-id
+VITE_FIREBASE_STORAGE_BUCKET=your-app.appspot.com
+VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+VITE_FIREBASE_APP_ID=your_app_id
+VITE_API_BASE_URL=http://localhost:5000/api
+
+# Backend Server Configuration
+PORT=5000
+NODE_ENV=development
+GROQ_API_KEY=gsk_your_groq_api_key_here
 ```
 
-| Variable | Description |
-|---|---|
-| `VITE_FIREBASE_API_KEY` | Firebase Web API key |
-| `VITE_FIREBASE_AUTH_DOMAIN` | Firebase Auth domain |
-| `VITE_FIREBASE_PROJECT_ID` | Firebase Project ID |
-| `VITE_FIREBASE_STORAGE_BUCKET` | Firebase Cloud Storage bucket |
-| `VITE_FIREBASE_MESSAGING_SENDER_ID` | Firebase Cloud Messaging Sender ID |
-| `VITE_FIREBASE_APP_ID` | Firebase Web App ID |
-| `GROQ_API_KEY` | Groq Cloud API key for ultra-fast LLaMA 3.3 inference |
-| `PORT` | API Server port (default: 5000) |
+### 3. Run Development Servers
+Start backend API server:
+```bash
+npm run server
+```
 
-> **Note for Judges & Reviewers:** The application includes a built-in **Reviewer Mode** and local fallback. If Firebase keys are not yet provided, you can click **"Enter Demo"** on the Login screen to explore the UI immediately.
-
-### 4. Running the Development Server
-**Frontend (Vite):**
+In a separate terminal, start frontend:
 ```bash
 npm run dev
 ```
-Open [http://localhost:5173](http://localhost:5173) in your browser.
 
-**Backend API Server:**
+---
+
+## 10. Automated Testing & Verification
+
+Run end-to-end pipeline test:
 ```bash
-npm run server:dev
+npx tsx scripts/test-e2e-pipeline.ts
 ```
-API runs on [http://localhost:5000](http://localhost:5000).
 
-### 5. Production Build & Verification
+Run dense vector semantic RAG retrieval test:
+```bash
+npx tsx scripts/test-rag-pipeline.ts
+```
+
+Run TypeScript compilation check:
+```bash
+npm run lint
+```
+
+Build production bundle:
 ```bash
 npm run build
 ```
-Runs strict TypeScript compilation checks across client and server configurations, and builds the production Vite bundle.
+
+---
+
+## 11. Security & Prompt Injection Defense
+- **API Key Isolation:** Groq API keys remain strictly server-side.
+- **Context Separation:** System instructions, retrieved context, and student questions are partitioned in system/user message blocks.
+- **Course Isolation:** Retrieval queries are strictly scoped to the active `courseId`.
+- **Firebase Security Rules:** Defined in `firestore.rules` and `storage.rules` preventing unauthorized cross-user access.
+
+---
+
+## 12. 3–5 Minute Hackathon Demo Flow
+1. **Landing Page:** Review the 6 core pillars and click **Explore Demo**.
+2. **Dashboard:** Toggle **DEMO MODE [ON]** to inspect preloaded course *CS 452: Distributed Systems*.
+3. **Knowledge Map (`/knowledge-map`):** Inspect the hierarchy (*Course -> Module -> Topic -> Concept*), view source citations, and check topic mastery.
+4. **AI Tutor (`/tutor`):** Ask *"How does Raft leader election prevent split votes?"* and observe the verified `GROUNDED` response with page citations.
+5. **Adaptive Quiz (`/quiz`):** Click **Generate Adaptive Quiz** or take an existing quiz; answer questions and test the 6-point wrong-answer remediation with *"Explain Simply"*.
+6. **Mastery & Analytics (`/progress`):** Observe live mastery update and review personalized recommendations.

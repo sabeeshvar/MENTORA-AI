@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions for authentication and ownership
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // User profile document: users/{uid}
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId);
+
+      // Mastery subcollection: users/{uid}/mastery/{topicId}
+      match /mastery/{topicId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Quiz attempts subcollection: users/{uid}/quizAttempts/{attemptId}
+      match /quizAttempts/{attemptId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Recommendations subcollection: users/{uid}/recommendations/{recId}
+      match /recommendations/{recId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Activity subcollection: users/{uid}/activity/{activityId}
+      match /activity/{activityId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // Courses collection: courses/{courseId}
+    match /courses/{courseId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+
+      // Course Materials subcollection: courses/{courseId}/materials/{materialId}
+      match /materials/{materialId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated() && get(/databases/$(database)/documents/courses/$(courseId)).data.ownerId == request.auth.uid;
+
+        // Chunks subcollection: courses/{courseId}/materials/{materialId}/chunks/{chunkId}
+        match /chunks/{chunkId} {
+          allow read: if isAuthenticated();
+          allow write: if isAuthenticated() && get(/databases/$(database)/documents/courses/$(courseId)).data.ownerId == request.auth.uid;
+        }
+      }
+
+      // Topics subcollection: courses/{courseId}/topics/{topicId}
+      match /topics/{topicId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated() && get(/databases/$(database)/documents/courses/$(courseId)).data.ownerId == request.auth.uid;
+      }
+    }
+
+    // Quizzes collection: quizzes/{quizId}
+    match /quizzes/{quizId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // Default deny for unmatched collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

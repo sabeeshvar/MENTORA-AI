@@ -1,4 +1,4 @@
-export type CourseMaterialType = 'PDF' | 'PPT' | 'PPTX' | 'MP4'
+export type CourseMaterialType = 'PDF' | 'PPT' | 'PPTX' | 'MP4' | 'VIDEO'
 
 export type MaterialProcessingStatus =
   | 'uploaded'

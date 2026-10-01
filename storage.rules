@@ -1,0 +1,28 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Course materials storage: courses/{courseId}/materials/{materialId}/{fileName}
+    match /courses/{courseId}/materials/{materialId}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      // Allow authenticated uploads with file size limit (50MB) and valid mime types
+      allow write: if isAuthenticated()
+                   && request.resource.size < 50 * 1024 * 1024
+                   && (request.resource.contentType.matches('application/pdf')
+                       || request.resource.contentType.matches('application/vnd.ms-powerpoint')
+                       || request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.presentationml.presentation')
+                       || request.resource.contentType.matches('video/mp4')
+                       || request.resource.contentType.matches('video/.*'));
+      allow delete: if isAuthenticated();
+    }
+
+    // Default deny for anything outside defined paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,3 +1,9 @@
+import {
+  defaultEmbeddingService,
+  cosineSimilarity,
+  type IEmbeddingService,
+} from './embeddingService'
+
 export interface ChunkCandidate {
   chunkId: string
   courseId: string
@@ -9,146 +15,232 @@ export interface ChunkCandidate {
   slideNumber?: number | null
   sectionTitle: string
   chunkIndex: number
+  embedding?: number[]
+  embeddingModel?: string
+  similarityScore?: number
 }
 
-export interface ScoredChunk {
-  chunk: ChunkCandidate
-  score: number
-  matchedTokens: string[]
-}
-
-const STOP_WORDS = new Set([
-  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from',
-  'has', 'he', 'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the',
-  'to', 'was', 'were', 'will', 'with', 'what', 'how', 'when', 'where',
-  'who', 'why', 'can', 'could', 'should', 'would', 'does', 'do', 'did',
-  'explain', 'describe', 'tell', 'me', 'about', 'give', 'overview',
-])
-
-/**
- * Tokenizes text into normalized words, excluding common stop words
- */
-export const tokenize = (text: string): string[] => {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s]/g, ' ')
-    .split(/\s+/)
-    .filter((token) => token.length > 1 && !STOP_WORDS.has(token))
+export interface RetrievedChunk {
+  chunkId: string
+  courseId: string
+  materialId: string
+  text: string
+  sourceType: string
+  sourceName: string
+  pageNumber?: number | null
+  slideNumber?: number | null
+  sectionTitle: string
+  chunkIndex: number
+  similarityScore: number
+  embeddingModel?: string
 }
 
 /**
- * Scores and retrieves top-K most relevant chunks for a question.
- * Ensures the entire document is NOT sent to Groq unnecessarily.
+ * Modular Vector Store Backend Interface.
+ * Allows seamless replacement with external vector databases (e.g., Pinecone, ChromaDB, Weaviate, Firestore Vector).
  */
-export const retrieveRelevantChunks = (
-  question: string,
-  chunks: ChunkCandidate[],
-  options?: { topK?: number; maxChars?: number }
-): ScoredChunk[] => {
-  if (!chunks || chunks.length === 0) return []
-
-  const topK = options?.topK || 6
-  const maxChars = options?.maxChars || 12000
-
-  const questionTokens = tokenize(question)
-  const normalizedQuestion = question.toLowerCase().trim()
-
-  const scored: ScoredChunk[] = chunks.map((chunk) => {
-    let score = 0
-    const matchedTokens: string[] = []
-    const chunkTextLower = chunk.text.toLowerCase()
-    const titleLower = (chunk.sectionTitle || '').toLowerCase()
-    const sourceNameLower = (chunk.sourceName || '').toLowerCase()
-
-    // 1. Exact query substring match (strongest signal)
-    if (normalizedQuestion.length > 5 && chunkTextLower.includes(normalizedQuestion)) {
-      score += 10.0
-    }
-
-    // 2. Token matches in body text
-    for (const token of questionTokens) {
-      if (chunkTextLower.includes(token)) {
-        score += 1.5
-        matchedTokens.push(token)
-
-        // Boost if token matches multiple times (term frequency)
-        const regex = new RegExp(`\\b${token}\\b`, 'gi')
-        const occurrences = (chunkTextLower.match(regex) || []).length
-        if (occurrences > 1) {
-          score += Math.min(occurrences * 0.3, 2.0)
-        }
-      }
-
-      // 3. Section Title match (extra relevance boost)
-      if (titleLower.includes(token)) {
-        score += 2.0
-      }
-
-      // 4. Source Name match
-      if (sourceNameLower.includes(token)) {
-        score += 0.5
-      }
-    }
-
-    return {
-      chunk,
-      score,
-      matchedTokens: Array.from(new Set(matchedTokens)),
-    }
-  })
-
-  // Filter out completely irrelevant chunks (score <= 0), or if all are 0, take first few
-  let filtered = scored.filter((s) => s.score > 0)
-  if (filtered.length === 0 && chunks.length > 0) {
-    // Fallback: take initial sequential chunks if question is very generic (e.g. "what is this about?")
-    filtered = scored.slice(0, 3)
-  }
-
-  // Sort descending by score
-  filtered.sort((a, b) => b.score - a.score)
-
-  // Cap at topK and cumulative char limit to keep Groq prompt concise and token-efficient
-  const selected: ScoredChunk[] = []
-  let cumulativeChars = 0
-
-  for (const item of filtered.slice(0, topK)) {
-    if (cumulativeChars + item.chunk.text.length > maxChars && selected.length > 0) {
-      break
-    }
-    selected.push(item)
-    cumulativeChars += item.chunk.text.length
-  }
-
-  return selected
+export interface IVectorStoreBackend {
+  indexChunks(courseId: string, chunks: ChunkCandidate[]): Promise<void>
+  searchSimilar(
+    courseId: string,
+    queryEmbedding: number[],
+    topK: number,
+    minSimilarity?: number
+  ): Promise<RetrievedChunk[]>
+  getAllCourseChunks(courseId: string): Promise<ChunkCandidate[]>
+  clearCourse(courseId: string): Promise<void>
 }
 
 /**
- * Builds clean, structured course context string for Groq
+ * High-performance course-partitioned vector store
  */
-export const formatGroundedContext = (scoredChunks: ScoredChunk[]): string => {
-  if (scoredChunks.length === 0) {
-    return 'NO COURSE MATERIAL CONTEXT AVAILABLE. (No matching chunks found in the course materials)'
+export class CoursePartitionedVectorStore implements IVectorStoreBackend {
+  private courseIndex = new Map<string, Map<string, ChunkCandidate>>()
+  private embeddingService: IEmbeddingService
+
+  constructor(embeddingService: IEmbeddingService = defaultEmbeddingService) {
+    this.embeddingService = embeddingService
   }
 
-  return scoredChunks
-    .map((item, idx) => {
-      const c = item.chunk
-      const locInfo: string[] = []
-      if (c.pageNumber !== undefined && c.pageNumber !== null) {
-        locInfo.push(`Page: ${c.pageNumber}`)
+  /**
+   * Indexes chunks partitioned strictly by courseId
+   */
+  public async indexChunks(courseId: string, chunks: ChunkCandidate[]): Promise<void> {
+    if (!courseId || !chunks || chunks.length === 0) return
+
+    let courseMap = this.courseIndex.get(courseId)
+    if (!courseMap) {
+      courseMap = new Map<string, ChunkCandidate>()
+      this.courseIndex.set(courseId, courseMap)
+    }
+
+    for (const chunk of chunks) {
+      // If chunk is missing an embedding, compute it deterministically
+      if (!chunk.embedding || chunk.embedding.length === 0) {
+        chunk.embedding = await this.embeddingService.generateEmbedding(
+          `${chunk.sectionTitle}: ${chunk.text}`
+        )
+        chunk.embeddingModel = this.embeddingService.modelName
       }
-      if (c.slideNumber !== undefined && c.slideNumber !== null) {
-        locInfo.push(`Slide: ${c.slideNumber}`)
+
+      courseMap.set(chunk.chunkId, chunk)
+    }
+  }
+
+  /**
+   * Searches for most similar chunks within a single course partition
+   */
+  public async searchSimilar(
+    courseId: string,
+    queryEmbedding: number[],
+    topK: number = 5,
+    minSimilarity: number = 0.15
+  ): Promise<RetrievedChunk[]> {
+    const courseMap = this.courseIndex.get(courseId)
+    if (!courseMap || courseMap.size === 0) {
+      return []
+    }
+
+    const scored: RetrievedChunk[] = []
+
+    for (const chunk of courseMap.values()) {
+      if (!chunk.embedding || chunk.embedding.length === 0) continue
+
+      // Compute exact cosine similarity between query and chunk embedding
+      const sim = cosineSimilarity(queryEmbedding, chunk.embedding)
+
+      // Strict relevance filtering to prevent unrelated content from entering context
+      if (sim >= minSimilarity) {
+        scored.push({
+          chunkId: chunk.chunkId,
+          courseId: chunk.courseId,
+          materialId: chunk.materialId,
+          text: chunk.text,
+          sourceType: chunk.sourceType,
+          sourceName: chunk.sourceName,
+          pageNumber: chunk.pageNumber ?? null,
+          slideNumber: chunk.slideNumber ?? null,
+          sectionTitle: chunk.sectionTitle,
+          chunkIndex: chunk.chunkIndex,
+          similarityScore: Math.round(sim * 10000) / 10000,
+          embeddingModel: chunk.embeddingModel,
+        })
       }
-      const locStr = locInfo.length > 0 ? locInfo.join(', ') : 'Location: N/A'
+    }
+
+    // Sort descending by cosine similarity score
+    scored.sort((a, b) => b.similarityScore - a.similarityScore)
+
+    // Return top-k relevant chunks
+    return scored.slice(0, topK)
+  }
+
+  public async getAllCourseChunks(courseId: string): Promise<ChunkCandidate[]> {
+    const map = this.courseIndex.get(courseId)
+    return map ? Array.from(map.values()) : []
+  }
+
+  public async clearCourse(courseId: string): Promise<void> {
+    this.courseIndex.delete(courseId)
+  }
+}
+
+// Global default vector store instance
+export const defaultVectorStore = new CoursePartitionedVectorStore()
+
+/**
+ * Main RAG Retrieval Service:
+ *
+ * Question
+ * -> embedding
+ * -> retrieval
+ * -> relevance filtering
+ * -> logging (query, retrieved chunks, count, response time)
+ * -> returns topK relevant chunks with source metadata
+ */
+export const retrieveRelevantChunks = async (
+  courseId: string,
+  query: string,
+  topK: number = 5,
+  options?: {
+    vectorStore?: IVectorStoreBackend
+    embeddingService?: IEmbeddingService
+    minSimilarity?: number
+  }
+): Promise<RetrievedChunk[]> => {
+  const startTime = Date.now()
+  const store = options?.vectorStore || defaultVectorStore
+  const embedService = options?.embeddingService || defaultEmbeddingService
+  const minSimilarity = options?.minSimilarity ?? 0.15
+
+  if (!courseId) {
+    console.warn('[RAG Retrieval] Empty courseId supplied to retrieveRelevantChunks')
+    return []
+  }
+
+  if (!query || query.trim().length === 0) {
+    return []
+  }
+
+  // 1. Generate query embedding
+  const queryEmbedding = await embedService.generateEmbedding(query.trim())
+
+  // 2. Perform vector cosine similarity search filtered strictly by courseId
+  const retrievedChunks = await store.searchSimilar(
+    courseId,
+    queryEmbedding,
+    topK,
+    minSimilarity
+  )
+
+  const responseTimeMs = Date.now() - startTime
+
+  // 3. Structured Logging as required
+  console.log('------------------------------------------------------------')
+  console.log(`[RAG Retrieval] Query: "${query.trim()}"`)
+  console.log(`[RAG Retrieval] Course ID: ${courseId}`)
+  console.log(`[RAG Retrieval] Retrieval Count: ${retrievedChunks.length} chunks (Top-${topK})`)
+  console.log(`[RAG Retrieval] Response Time: ${responseTimeMs} ms`)
+  if (retrievedChunks.length > 0) {
+    console.log('[RAG Retrieved Chunks]:')
+    retrievedChunks.forEach((c, idx) => {
+      const loc = c.pageNumber !== null ? `Page ${c.pageNumber}` : c.slideNumber !== null ? `Slide ${c.slideNumber}` : 'N/A'
+      console.log(`  ${idx + 1}. [Score: ${c.similarityScore.toFixed(4)}] ${c.sourceName} | ${loc} | "${c.sectionTitle}" (${c.chunkId})`)
+    })
+  } else {
+    console.log('[RAG Retrieved Chunks]: None matched minimum similarity threshold.')
+  }
+  console.log('------------------------------------------------------------')
+
+  return retrievedChunks
+}
+
+/**
+ * Formats retrieved chunks into clean, cited course context blocks for Groq LLM
+ */
+export const formatGroundedContext = (retrievedChunks: RetrievedChunk[]): string => {
+  if (retrievedChunks.length === 0) {
+    return 'NO RELEVANT COURSE MATERIAL FOUND FOR THIS QUERY.'
+  }
+
+  return retrievedChunks
+    .map((chunk, idx) => {
+      const locParts: string[] = []
+      if (chunk.pageNumber !== null && chunk.pageNumber !== undefined) {
+        locParts.push(`Page: ${chunk.pageNumber}`)
+      }
+      if (chunk.slideNumber !== null && chunk.slideNumber !== undefined) {
+        locParts.push(`Slide: ${chunk.slideNumber}`)
+      }
+      const locStr = locParts.length > 0 ? locParts.join(', ') : 'Location: General Section'
 
       return `--- CONTEXT ITEM [${idx + 1}] ---
-Source Material: ${c.sourceName} (${c.sourceType})
+Source Material: ${chunk.sourceName} (${chunk.sourceType})
 ${locStr}
-Section Title: ${c.sectionTitle || 'General'}
-Relevant Content:
-${c.text}
-`
+Section Title: ${chunk.sectionTitle || 'Overview'}
+Relevance Similarity Score: ${chunk.similarityScore}
+Content:
+${chunk.text}`
     })
     .join('\n\n')
 }

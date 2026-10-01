@@ -6,6 +6,7 @@ import {
 import { extractPdfPages } from './pdfExtractor'
 import { extractPptxSlides } from './pptxExtractor'
 import { createChunksFromExtractedPages } from './chunkingService'
+import { defaultEmbeddingService } from './embedding'
 import type {
   ExtractedPage,
   ExtractionProgressCallback,
@@ -171,8 +172,17 @@ export const processUploadedMaterial = async (
       throw new Error('Extracted content yielded zero chunks.')
     }
 
-    // 4. Save chunks to Firestore
-    reportProgress(`Saving ${chunks.length} structured chunks to Firestore...`, 90)
+    // 4. Generate dense semantic embeddings for chunks
+    reportProgress(`Generating vector embeddings for ${chunks.length} chunks...`, 86)
+    const texts = chunks.map((c) => `${c.sectionTitle}: ${c.text}`)
+    const embeddings = await defaultEmbeddingService.generateBatchEmbeddings(texts)
+    for (let i = 0; i < chunks.length; i++) {
+      chunks[i].embedding = embeddings[i]
+      chunks[i].embeddingModel = defaultEmbeddingService.modelName
+    }
+
+    // 5. Save chunks with embeddings and metadata to Firestore
+    reportProgress(`Saving ${chunks.length} structured chunks to Firestore...`, 92)
     await saveMaterialChunks(courseId, material.materialId, chunks)
 
     // 5. Update processing status to 'processed'
@@ -208,3 +218,5 @@ export * from './types'
 export * from './pdfExtractor'
 export * from './pptxExtractor'
 export * from './chunkingService'
+export * from './embedding'
+export * from './videoExtractor'
