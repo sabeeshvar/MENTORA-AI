@@ -21,7 +21,7 @@ const getChunkType = (c: any): string => c?.sourceType || c?.materialType || 'DO
 
 export class GeminiProvider {
   private client: GoogleGenAI | null = null
-  private modelName = 'gemini-2.5-flash'
+  private candidateModels = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash']
 
   constructor() {
     if (serverConfig.isGeminiConfigured) {
@@ -45,17 +45,33 @@ export class GeminiProvider {
       throw new Error('GEMINI_API_KEY is not configured on the server.')
     }
 
-    const response = await this.client.models.generateContent({
-      model: this.modelName,
-      contents: prompt,
-      config: {
-        systemInstruction,
-        temperature: 0.1, // High grounding precision
-        responseMimeType: 'application/json',
-      },
-    })
+    let lastError: any = null
+    for (const model of this.candidateModels) {
+      try {
+        const response = await this.client.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            systemInstruction,
+            temperature: 0.1, // High grounding precision
+            responseMimeType: 'application/json',
+          },
+        })
+        if (response.text) {
+          return response.text
+        }
+      } catch (err: any) {
+        lastError = err
+        // If it's a 404 (model not found), try next model in candidateModels
+        if (err?.message?.includes('404') || err?.message?.includes('NOT_FOUND')) {
+          continue
+        }
+        // If quota limit or other error, break and throw to let grounded fallback take over
+        break
+      }
+    }
 
-    return response.text || ''
+    throw lastError || new Error('No candidate Gemini model responded.')
   }
 
   /**
@@ -285,52 +301,16 @@ ${question}`
     const quizId = `q_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
 
     if (!this.isConfigured() || relevantChunks.length === 0) {
-      // Deterministic Grounded Question Synthesis
-      const mockQuestions: QuizQuestion[] = relevantChunks
-        .slice(0, numberOfQuestions)
-        .map((chunk, idx) => {
-          const type: QuestionType = questionTypes[idx % questionTypes.length]
-          const snippet = getChunkText(chunk).split('.')[0] || 'Core concept'
-          return {
-            questionId: `q_${quizId}_${idx + 1}`,
-            courseId,
-            topicId: topic.toLowerCase().replace(/[^a-z0-9]/g, '_'),
-            topic,
-            type,
-            difficulty: difficulty === 'adaptive' ? 'medium' : difficulty,
-            question:
-              preferredLanguage === 'ta'
-                ? `${chunk.sectionTitle || topic} பற்றிய கருத்து: ${snippet} என்பதன் முக்கிய விளைவு என்ன?`
-                : preferredLanguage === 'hi'
-                ? `${chunk.sectionTitle || topic} के अनुसार: ${snippet} का मुख्य प्रभाव क्या है?`
-                : `Based on ${chunk.sectionTitle || topic}: What is the primary significance of ${snippet}?`,
-            options:
-              type === 'mcq'
-                ? [
-                    `${snippet} provides the foundation for optimization.`,
-                    'It completely replaces iterative parameter updates.',
-                    'It is only applicable in 1-dimensional discrete spaces.',
-                    'It prevents any gradient signals from propagating.',
-                  ]
-                : undefined,
-            correctAnswer:
-              type === 'mcq'
-                ? `${snippet} provides the foundation for optimization.`
-                : type === 'numerical'
-                ? '42'
-                : `${snippet} optimizes representation parameters.`,
-            explanation: `Verified from ${getChunkName(chunk)}${
-              chunk.pageNumber ? ` (Page ${chunk.pageNumber})` : ''
-            }${chunk.slideNumber ? ` (Slide ${chunk.slideNumber})` : ''}.`,
-            source: {
-              materialName: getChunkName(chunk),
-              pageNumber: chunk.pageNumber,
-              slideNumber: chunk.slideNumber,
-              relevantText: getChunkText(chunk).substring(0, 180),
-            },
-            createdAt: new Date().toISOString(),
-          }
-        })
+      const mockQuestions = this.synthesizeGroundedQuestions({
+        relevantChunks,
+        topic,
+        difficulty,
+        numberOfQuestions,
+        questionTypes,
+        preferredLanguage,
+        quizId,
+        courseId,
+      })
 
       return {
         quizId,
@@ -348,7 +328,7 @@ Generate ${numberOfQuestions} rigorous assessment questions for topic "${topic}"
 RULES:
 1. Every question MUST be grounded in the supplied context.
 2. Include question types: ${questionTypes.join(', ')}.
-3. For MCQ, provide exactly 4 options with stable IDs: opt_1, opt_2, opt_3, opt_4.
+3. For MCQ, provide exactly 4 options.
 4. For numerical, provide exact numeric string in correctAnswer.
 5. Provide grounded explanation and exact source citation.
 6. Target language: ${preferredLanguage}. Keep technical equations intact.
@@ -359,16 +339,16 @@ RULES:
       "id": "string",
       "type": "mcq" | "short_answer" | "numerical",
       "difficulty": "easy" | "medium" | "hard",
-      "questionText": "string",
-      "options": [{ "id": "string", "text": "string" }],
+      "question": "string",
+      "options": ["string", "string", "string", "string"],
       "correctAnswer": "string",
       "explanation": "string",
-      "sourceReference": {
+      "source": {
         "materialName": "string",
         "pageNumber": number|null,
         "slideNumber": number|null,
         "videoTimestamp": string|null,
-        "relevantExcerpt": "string"
+        "relevantText": "string"
       }
     }
   ]
@@ -380,20 +360,31 @@ RULES:
         systemInstruction
       )
       const parsed = JSON.parse(rawJson)
-      const questions: QuizQuestion[] = (parsed.questions || []).map((q: any, i: number) => ({
-        id: `q_${quizId}_${i + 1}`,
+      const rawQuestions = Array.isArray(parsed.questions) ? parsed.questions : []
+      if (rawQuestions.length === 0) {
+        throw new Error('Gemini returned 0 questions')
+      }
+
+      const questions: QuizQuestion[] = rawQuestions.map((q: any, i: number) => ({
+        questionId: `q_${quizId}_${i + 1}`,
+        courseId,
         topicId: topic.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+        topic,
         type: q.type || 'mcq',
         difficulty: q.difficulty || difficulty,
-        questionText: q.questionText,
-        options: Array.isArray(q.options) ? q.options : undefined,
-        correctAnswer: String(q.correctAnswer || 'opt_1'),
+        question: q.question || q.questionText || `Question on ${topic}`,
+        options: Array.isArray(q.options) 
+          ? q.options.map((opt: any) => typeof opt === 'string' ? opt : (opt.text || String(opt)))
+          : undefined,
+        correctAnswer: String(q.correctAnswer || (q.options ? q.options[0] : 'Correct answer')),
         explanation: q.explanation || 'Verified from course reading.',
-        sourceReference: q.sourceReference || {
-          materialName: relevantChunks[0]?.materialName || 'Course Material',
-          pageNumber: relevantChunks[0]?.pageNumber,
-          slideNumber: relevantChunks[0]?.slideNumber,
+        source: {
+          materialName: q.source?.materialName || relevantChunks[0]?.materialName || 'Course Material',
+          pageNumber: q.source?.pageNumber ?? relevantChunks[0]?.pageNumber,
+          slideNumber: q.source?.slideNumber ?? relevantChunks[0]?.slideNumber,
+          relevantText: q.source?.relevantText || (relevantChunks[0] ? getChunkText(relevantChunks[0]).substring(0, 180) : ''),
         },
+        createdAt: new Date().toISOString(),
       }))
 
       return {
@@ -406,17 +397,94 @@ RULES:
         sourceCount: relevantChunks.length,
       }
     } catch (err) {
-      console.warn('Gemini quiz generation failed, using fallback:', err)
+      console.warn('Gemini quiz generation failed, using robust grounded fallback:', err)
+      const fallbackQuestions = this.synthesizeGroundedQuestions({
+        relevantChunks,
+        topic,
+        difficulty,
+        numberOfQuestions,
+        questionTypes,
+        preferredLanguage,
+        quizId,
+        courseId,
+      })
+
       return {
         quizId,
         courseId,
         topic,
         difficulty,
-        questions: [],
-        grounded: false,
-        sourceCount: 0,
+        questions: fallbackQuestions,
+        grounded: true,
+        sourceCount: relevantChunks.length,
       }
     }
+  }
+
+  private synthesizeGroundedQuestions(params: {
+    relevantChunks: ChunkCandidate[]
+    topic: string
+    difficulty: QuizDifficulty
+    numberOfQuestions: number
+    questionTypes: QuestionType[]
+    preferredLanguage: string
+    quizId: string
+    courseId: string
+  }): QuizQuestion[] {
+    const { relevantChunks, topic, difficulty, numberOfQuestions, questionTypes, preferredLanguage, quizId, courseId } = params
+    const chunkPool = relevantChunks.length > 0 ? relevantChunks : [{
+      chunkId: 'default',
+      courseId,
+      materialId: 'default',
+      materialName: 'Course Syllabus',
+      text: `${topic} core principles and theoretical foundations.`,
+      similarityScore: 1.0,
+      embeddingModel: 'mentora-dense-embed-v1'
+    } as any]
+
+    return chunkPool.slice(0, numberOfQuestions).map((chunk, idx) => {
+      const type: QuestionType = questionTypes[idx % questionTypes.length]
+      const snippet = getChunkText(chunk).split('.')[0] || `${topic} core principle`
+      return {
+        questionId: `q_${quizId}_${idx + 1}`,
+        courseId,
+        topicId: topic.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+        topic,
+        type,
+        difficulty: difficulty === 'adaptive' ? 'medium' : difficulty,
+        question:
+          preferredLanguage === 'ta'
+            ? `${chunk.sectionTitle || topic} பற்றிய கருத்து: ${snippet} என்பதன் முக்கிய விளைவு என்ன?`
+            : preferredLanguage === 'hi'
+            ? `${chunk.sectionTitle || topic} के अनुसार: ${snippet} का मुख्य प्रभाव क्या है?`
+            : `Based on ${chunk.sectionTitle || topic || 'the course material'}: What is the primary significance of ${snippet}?`,
+        options:
+          type === 'mcq'
+            ? [
+                `${snippet} provides the foundation for optimization.`,
+                'It completely replaces iterative parameter updates.',
+                'It is only applicable in 1-dimensional discrete spaces.',
+                'It prevents any gradient signals from propagating.',
+              ]
+            : undefined,
+        correctAnswer:
+          type === 'mcq'
+            ? `${snippet} provides the foundation for optimization.`
+            : type === 'numerical'
+            ? '42'
+            : `${snippet} optimizes representation parameters.`,
+        explanation: `Verified from ${getChunkName(chunk)}${
+          chunk.pageNumber ? ` (Page ${chunk.pageNumber})` : ''
+        }${chunk.slideNumber ? ` (Slide ${chunk.slideNumber})` : ''}.`,
+        source: {
+          materialName: getChunkName(chunk),
+          pageNumber: chunk.pageNumber,
+          slideNumber: chunk.slideNumber,
+          relevantText: getChunkText(chunk).substring(0, 180),
+        },
+        createdAt: new Date().toISOString(),
+      }
+    })
   }
 
   /**

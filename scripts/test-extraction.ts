@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import JSZip from 'jszip'
 import { extractPdfPages } from '../src/services/extraction/pdfExtractor'
 import { extractPptxSlides } from '../src/services/extraction/pptxExtractor'

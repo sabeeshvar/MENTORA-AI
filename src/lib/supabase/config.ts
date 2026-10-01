@@ -10,11 +10,11 @@
 
 const rawUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) 
   ? String(import.meta.env.VITE_SUPABASE_URL).trim() 
-  : ''
+  : (typeof process !== 'undefined' && process.env ? String(process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '').trim() : '')
 
 const rawAnonKey = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY) 
   ? String(import.meta.env.VITE_SUPABASE_ANON_KEY).trim() 
-  : ''
+  : (typeof process !== 'undefined' && process.env ? String(process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '').trim() : '')
 
 /**
  * Sanitize URL: if /rest/v1/ is provided at the end, strip it to obtain the project root domain
