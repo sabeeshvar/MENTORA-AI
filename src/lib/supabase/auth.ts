@@ -1,6 +1,7 @@
 import type { User } from '@supabase/supabase-js'
 import { supabase } from './client'
 import { isSupabaseConfigured } from './config'
+import { syncUserDocument, getUserDocument } from './db'
 import type { UserProfile, LearningStats } from '@/types/auth'
 
 export const defaultLearningStats: LearningStats = {
@@ -78,9 +79,11 @@ export const subscribeToAuth = (callback: (user: UserProfile | null) => void) =>
   }
 
   // Initial check
-  supabase.auth.getSession().then(({ data: { session } }) => {
+  supabase.auth.getSession().then(async ({ data: { session } }) => {
     if (session?.user) {
-      callback(mapSupabaseUserToProfile(session.user))
+      const existing = await getUserDocument(session.user.id)
+      const p = existing || (await syncUserDocument(session.user))
+      callback(p)
     } else {
       const savedDemoUser = localStorage.getItem('mentora_demo_user')
       if (savedDemoUser) {
@@ -97,7 +100,9 @@ export const subscribeToAuth = (callback: (user: UserProfile | null) => void) =>
 
   const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
     if (session?.user) {
-      callback(mapSupabaseUserToProfile(session.user))
+      const existing = await getUserDocument(session.user.id)
+      const p = existing || (await syncUserDocument(session.user))
+      callback(p)
     } else {
       callback(null)
     }
@@ -141,7 +146,8 @@ export const loginWithEmail = async (email: string, pass: string): Promise<UserP
     throw new Error('Authentication succeeded but user profile was not returned.')
   }
 
-  const profile = mapSupabaseUserToProfile(data.user)
+  const existing = await getUserDocument(data.user.id)
+  const profile = existing || (await syncUserDocument(data.user))
   localStorage.setItem('mentora_demo_user', JSON.stringify(profile))
   return profile
 }
@@ -192,7 +198,7 @@ export const registerWithEmail = async (
     throw new Error('Registration succeeded but user profile was not returned.')
   }
 
-  const profile = mapSupabaseUserToProfile(data.user, { name: chosenName })
+  const profile = await syncUserDocument(data.user, { name: chosenName })
   localStorage.setItem('mentora_demo_user', JSON.stringify(profile))
   return profile
 }
