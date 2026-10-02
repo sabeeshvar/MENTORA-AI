@@ -82,8 +82,60 @@ DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
         ALTER TABLE public.course_chunks ADD COLUMN IF NOT EXISTS embedding vector(256);
+        CREATE INDEX IF NOT EXISTS idx_course_chunks_embedding 
+            ON public.course_chunks USING hnsw (embedding vector_cosine_ops);
     END IF;
 END $$;
+
+-- RPC Function for Grounded Vector Search with Strict Course Boundary Isolation
+CREATE OR REPLACE FUNCTION match_course_chunks(
+    p_course_id UUID,
+    query_embedding vector(256),
+    match_threshold FLOAT DEFAULT 0.15,
+    match_count INT DEFAULT 5
+)
+RETURNS TABLE (
+    id UUID,
+    course_id UUID,
+    material_id UUID,
+    chunk_index INT,
+    content TEXT,
+    page_number INT,
+    slide_number INT,
+    video_timestamp TEXT,
+    token_count INT,
+    topic_id TEXT,
+    concept_id TEXT,
+    metadata JSONB,
+    similarity FLOAT
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        cc.id,
+        cc.course_id,
+        cc.material_id,
+        cc.chunk_index,
+        cc.content,
+        cc.page_number,
+        cc.slide_number,
+        cc.video_timestamp,
+        cc.token_count,
+        cc.topic_id,
+        cc.concept_id,
+        cc.metadata,
+        (1 - (cc.embedding <=> query_embedding))::FLOAT AS similarity
+    FROM public.course_chunks cc
+    WHERE cc.course_id = p_course_id
+      AND cc.embedding IS NOT NULL
+      AND (1 - (cc.embedding <=> query_embedding)) >= match_threshold
+    ORDER BY cc.embedding <=> query_embedding ASC
+    LIMIT match_count;
+END;
+$$;
 
 -- 5. COURSE TOPICS & KNOWLEDGE GRAPH PREREQUISITES
 CREATE TABLE IF NOT EXISTS public.course_topics (
@@ -158,7 +210,8 @@ CREATE TABLE IF NOT EXISTS public.study_plans (
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'archived')),
     days JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_study_plans_user_course UNIQUE (user_id, course_id)
 );
 
 -- 10. REVISION ITEMS TABLE (Spaced-Repetition Schedule)
@@ -235,28 +288,42 @@ ALTER TABLE public.recommendations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.evaluation_results ENABLE ROW LEVEL SECURITY;
 
 -- Profiles: Users can only read and update their own profile
+DROP POLICY IF EXISTS "Users can view own profile" ON public.profiles;
 CREATE POLICY "Users can view own profile" ON public.profiles
     FOR SELECT USING (auth.uid() = id);
+
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
 CREATE POLICY "Users can update own profile" ON public.profiles
     FOR UPDATE USING (auth.uid() = id);
+
+DROP POLICY IF EXISTS "Users can insert own profile" ON public.profiles;
 CREATE POLICY "Users can insert own profile" ON public.profiles
     FOR INSERT WITH CHECK (auth.uid() = id);
 
 -- Courses: Users can only see and manage their own courses
+DROP POLICY IF EXISTS "Users can view own courses" ON public.courses;
 CREATE POLICY "Users can view own courses" ON public.courses
     FOR SELECT USING (auth.uid() = owner_id);
+
+DROP POLICY IF EXISTS "Users can create own courses" ON public.courses;
 CREATE POLICY "Users can create own courses" ON public.courses
     FOR INSERT WITH CHECK (auth.uid() = owner_id);
+
+DROP POLICY IF EXISTS "Users can update own courses" ON public.courses;
 CREATE POLICY "Users can update own courses" ON public.courses
     FOR UPDATE USING (auth.uid() = owner_id);
+
+DROP POLICY IF EXISTS "Users can delete own courses" ON public.courses;
 CREATE POLICY "Users can delete own courses" ON public.courses
     FOR DELETE USING (auth.uid() = owner_id);
 
 -- Course Materials: Only course owner can read and write
+DROP POLICY IF EXISTS "Course owner can access materials" ON public.course_materials;
 CREATE POLICY "Course owner can access materials" ON public.course_materials
     FOR ALL USING (auth.uid() = owner_id);
 
 -- Course Chunks: Access granted via course ownership
+DROP POLICY IF EXISTS "Course owner can access chunks" ON public.course_chunks;
 CREATE POLICY "Course owner can access chunks" ON public.course_chunks
     FOR ALL USING (
         EXISTS (
@@ -267,6 +334,7 @@ CREATE POLICY "Course owner can access chunks" ON public.course_chunks
     );
 
 -- Course Topics: Access granted via course ownership
+DROP POLICY IF EXISTS "Course owner can access topics" ON public.course_topics;
 CREATE POLICY "Course owner can access topics" ON public.course_topics
     FOR ALL USING (
         EXISTS (
@@ -277,31 +345,64 @@ CREATE POLICY "Course owner can access topics" ON public.course_topics
     );
 
 -- Mastery: Students only access their own mastery
+DROP POLICY IF EXISTS "Students access own mastery" ON public.mastery;
 CREATE POLICY "Students access own mastery" ON public.mastery
     FOR ALL USING (auth.uid() = user_id);
 
 -- Quizzes: Students access their own quizzes
+DROP POLICY IF EXISTS "Students access own quizzes" ON public.quizzes;
 CREATE POLICY "Students access own quizzes" ON public.quizzes
     FOR ALL USING (auth.uid() = user_id);
 
 -- Quiz Attempts: Students access their own attempts
+DROP POLICY IF EXISTS "Students access own attempts" ON public.quiz_attempts;
 CREATE POLICY "Students access own attempts" ON public.quiz_attempts
     FOR ALL USING (auth.uid() = user_id);
 
 -- Study Plans: Students access their own plans
+DROP POLICY IF EXISTS "Students access own study plans" ON public.study_plans;
 CREATE POLICY "Students access own study plans" ON public.study_plans
     FOR ALL USING (auth.uid() = user_id);
 
 -- Revision Items: Students access their own revision items
+DROP POLICY IF EXISTS "Students access own revision items" ON public.revision_items;
 CREATE POLICY "Students access own revision items" ON public.revision_items
     FOR ALL USING (auth.uid() = user_id);
 
 -- Recommendations: Students access their own recommendations
+DROP POLICY IF EXISTS "Students access own recommendations" ON public.recommendations;
 CREATE POLICY "Students access own recommendations" ON public.recommendations
     FOR ALL USING (auth.uid() = user_id);
 
 -- Evaluation Results: Read-only for authenticated students, insertable by test runner
+DROP POLICY IF EXISTS "Authenticated users view evaluations" ON public.evaluation_results;
 CREATE POLICY "Authenticated users view evaluations" ON public.evaluation_results
     FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Authenticated users insert evaluations" ON public.evaluation_results;
 CREATE POLICY "Authenticated users insert evaluations" ON public.evaluation_results
     FOR INSERT TO authenticated WITH CHECK (true);
+
+-- =============================================================================
+-- STORAGE BUCKET CONFIGURATION & POLICIES
+-- =============================================================================
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('course-materials', 'course-materials', true)
+ON CONFLICT (id) DO NOTHING;
+
+DROP POLICY IF EXISTS "Authenticated users can upload course materials" ON storage.objects;
+CREATE POLICY "Authenticated users can upload course materials" ON storage.objects
+    FOR INSERT TO authenticated WITH CHECK (bucket_id = 'course-materials');
+
+DROP POLICY IF EXISTS "Public can view course materials" ON storage.objects;
+CREATE POLICY "Public can view course materials" ON storage.objects
+    FOR SELECT USING (bucket_id = 'course-materials');
+
+DROP POLICY IF EXISTS "Users can update own course materials in storage" ON storage.objects;
+CREATE POLICY "Users can update own course materials in storage" ON storage.objects
+    FOR UPDATE TO authenticated USING (bucket_id = 'course-materials' AND (storage.foldername(name))[1] = 'courses');
+
+DROP POLICY IF EXISTS "Users can delete own course materials in storage" ON storage.objects;
+CREATE POLICY "Users can delete own course materials in storage" ON storage.objects
+    FOR DELETE TO authenticated USING (bucket_id = 'course-materials' AND (storage.foldername(name))[1] = 'courses');
+

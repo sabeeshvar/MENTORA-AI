@@ -20,4 +20,10 @@ export const serverConfig = {
     process.env.SUPABASE_ANON_KEY &&
     !process.env.SUPABASE_ANON_KEY.includes('mock-')
   ),
+  isServiceRoleConfigured: Boolean(
+    process.env.SUPABASE_SERVICE_ROLE_KEY &&
+    process.env.SUPABASE_SERVICE_ROLE_KEY.trim() !== '' &&
+    !process.env.SUPABASE_SERVICE_ROLE_KEY.includes('your_') &&
+    !process.env.SUPABASE_SERVICE_ROLE_KEY.includes('placeholder')
+  ),
 }

@@ -11,6 +11,7 @@ healthRouter.get('/', (_req: Request, res: Response) => {
     environment: serverConfig.nodeEnv,
     geminiConfigured: serverConfig.isGeminiConfigured,
     supabaseConfigured: serverConfig.isSupabaseConfigured,
+    supabaseServiceRoleConfigured: serverConfig.isServiceRoleConfigured,
     aiModel: 'gemini-2.5-flash',
   })
 })

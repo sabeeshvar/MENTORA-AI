@@ -27,6 +27,7 @@ app.listen(serverConfig.port, () => {
   console.log(`   AI Engine: Google Gemini 2.5 Flash`)
   console.log(`   Gemini Configured: ${serverConfig.isGeminiConfigured ? 'Yes' : 'No (Pending Key)'}`)
   console.log(`   Supabase Configured: ${serverConfig.isSupabaseConfigured ? 'Yes' : 'No (Local/Mock Mode)'}`)
+  console.log(`   Supabase Service Role: ${serverConfig.isServiceRoleConfigured ? 'Configured (Admin Enabled)' : 'Unset (Admin Tasks Restricted)'}`)
 })
 
 export default app

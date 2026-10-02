@@ -13,6 +13,7 @@ dist-ssr
 *.local
 *.tsbuildinfo
 scratch/
+supabase/.temp/
 
 # Editor directories and files
 .vscode/*
