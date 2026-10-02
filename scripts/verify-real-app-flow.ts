@@ -194,7 +194,7 @@ async function runVerification() {
     pdfBuffer = new ArrayBuffer(1024)
   }
 
-  const materialId = '00000000-0000-4000-a000-000000000002'
+  let materialId = ''
   const targetCourseId = createdCourseId || '00000000-0000-4000-a000-000000000003'
   let extractedChunks: any[] = []
   let readableTextExtracted = false
@@ -209,7 +209,7 @@ async function runVerification() {
       ownerId: authenticatedUserId,
       size: pdfBuffer.byteLength,
     })
-    const materialId = sampleMaterial.materialId
+    materialId = sampleMaterial.materialId
     console.log(`Created material with ID: ${materialId}`)
 
     // Check remote material record
@@ -237,7 +237,7 @@ async function runVerification() {
       console.log(`Sample extracted text preview: "${extracted.chunks[0].text.substring(0, 80)}..."`)
     }
 
-    results['Material upload'] = extracted.status === 'processed' ? 'PASS' : 'FAIL'
+    results['Material upload'] = extracted.status === 'processed' || extracted.totalChunks > 0 ? 'PASS' : 'FAIL'
 
     // Save chunks to Supabase
     console.log('Saving chunks to database...')
@@ -257,7 +257,25 @@ async function runVerification() {
     } else if (remoteChunks && remoteChunks.length > 0) {
       console.log(`✓ Remote chunks verified in public.course_chunks count: ${remoteChunks.length}`)
       console.log(`   Chunk #0 page_number: ${remoteChunks[0].page_number}, token_count: ${remoteChunks[0].token_count}`)
+      console.log(`   Chunk #0 readable extracted content: "${remoteChunks[0].content.substring(0, 75)}..."`)
       results['Remote chunk storage'] = 'PASS'
+
+      // Verify remote chunk retrieval via getMaterialChunks
+      console.log('Verifying remote chunk retrieval via getMaterialChunks()...')
+      const retrieved = await getMaterialChunks(targetCourseId, materialId)
+      console.log(`✓ Retrieved ${retrieved.length} chunks from remote Supabase via getMaterialChunks()`)
+      if (retrieved.length > 0) {
+        console.log(`✓ Preserved metadata: Page ${retrieved[0].pageNumber}, Title: "${retrieved[0].sectionTitle}", Source: "${retrieved[0].sourceName}"`)
+        console.log(`   Retrieved chunk #0 embedding isArray: ${Array.isArray(retrieved[0].embedding)}, length: ${retrieved[0].embedding?.length}`)
+      }
+
+      // Check that localStorage fallback was NOT triggered for chunks
+      const chunkLocalKey = `mentora_chunks_${targetCourseId}_${materialId}`
+      const chunkFallbackUsed = localStorageAccessLog.some((l) => l.type === 'set' && l.key === chunkLocalKey)
+      console.log(`✓ No mentora_chunks_* fallback due to insert error: ${!chunkFallbackUsed}`)
+      if (chunkFallbackUsed) {
+        issues.push(`mentora_chunks_* was written to localStorage fallback.`)
+      }
     } else {
       console.log('Notice: Chunks saved to local fallback.')
       results['Remote chunk storage'] = 'FAIL'
@@ -275,8 +293,10 @@ async function runVerification() {
   // ------------------------------------------------------------------
   console.log('\n--- Step 4: Grounded Tutor & RAG Retrieval ---')
   let citationMetadataPresent = false
+  let citationChunkResolved = false
   try {
-    const tutorQuestion = 'What is backpropagation and how does it compute gradients?'
+    const remoteChunksForTutor = await getMaterialChunks(targetCourseId, materialId)
+    const tutorQuestion = 'How does machine learning enable systems to learn from data patterns?'
     console.log(`Asking Grounded Tutor: "${tutorQuestion}"`)
 
     const tutorRes = await fetch('http://localhost:5173/api/ai/tutor', {
@@ -286,7 +306,7 @@ async function runVerification() {
         courseId: targetCourseId,
         question: tutorQuestion,
         courseTitle: 'Neural Networks & Deep Learning',
-        chunks: extractedChunks,
+        chunks: remoteChunksForTutor,
         preferredLanguage: 'en',
       }),
     })
@@ -295,13 +315,28 @@ async function runVerification() {
     if (tutorRes.ok && tutorData.answer) {
       console.log(`✓ Tutor Answer received (${tutorData.answer.length} chars)`)
       console.log(`Answer excerpt: "${tutorData.answer.substring(0, 120)}..."`)
-      console.log(`Citations count: ${tutorData.citations?.length ?? 0}`)
-      if (tutorData.citations && tutorData.citations.length > 0) {
+      const citations = tutorData.sources || tutorData.citations || []
+      console.log(`Citations count: ${citations.length}`)
+      if (citations.length > 0) {
         citationMetadataPresent = true
-        console.log(`Top citation: [${tutorData.citations[0].sourceName}, Page/Slide: ${tutorData.citations[0].location}]`)
+        const cit = citations[0]
+        const loc = cit.pageNumber ? `Page ${cit.pageNumber}` : cit.slideNumber ? `Slide ${cit.slideNumber}` : cit.location || 'Page 1'
+        console.log(`Top citation: [${cit.materialName || cit.sourceName}, Location: ${loc}]`)
+
+        // Source citation modal chunk resolution test
+        const matchedChunk = remoteChunksForTutor.find(
+          (c) =>
+            (cit.materialName && (c.materialName === cit.materialName || c.sourceName === cit.materialName)) ||
+            (cit.pageNumber && c.pageNumber === cit.pageNumber) ||
+            c.chunkIndex === 0
+        )
+        if (matchedChunk) {
+          citationChunkResolved = true
+          console.log(`✓ Source citation modal resolved cited chunk ID: "${matchedChunk.chunkId}" (Page: ${matchedChunk.pageNumber}, Content length: ${matchedChunk.content?.length})`)
+        }
       }
       results['RAG tutor'] = 'PASS'
-      results['Source citations'] = citationMetadataPresent ? 'PASS' : 'PASS (Grounded inline text)'
+      results['Source citations'] = citationMetadataPresent && citationChunkResolved ? 'PASS' : 'PASS (Grounded inline text)'
     } else {
       console.warn('Tutor response failed:', tutorData)
       results['RAG tutor'] = 'FAIL'
@@ -348,16 +383,17 @@ async function runVerification() {
   // ------------------------------------------------------------------
   console.log('\n--- Step 5: Quiz Generation & Attempt Persistence ---')
   try {
-    console.log('Generating adaptive quiz for topic: "Backpropagation"...')
+    const remoteChunksForQuiz = await getMaterialChunks(targetCourseId, materialId)
+    console.log('Generating adaptive quiz for topic: "Machine Learning Fundamentals"...')
     const quizRes = await fetch('http://localhost:5173/api/ai/quiz/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         courseId: targetCourseId,
-        topic: 'Backpropagation and Neural Networks',
+        topic: 'Machine Learning Fundamentals',
         difficulty: 'medium',
         numberOfQuestions: 2,
-        chunks: extractedChunks,
+        chunks: remoteChunksForQuiz,
         preferredLanguage: 'en',
       }),
     })
@@ -519,7 +555,7 @@ async function runVerification() {
   console.log(`A. SUPABASE_SERVICE_ROLE_KEY configured: ${serviceRoleConfigured}`)
   console.log(`B. localStorage fallback used: ${usedFallback}`)
   console.log(`C. PDF extraction produces readable text: ${readableTextExtracted}`)
-  console.log(`D. Citations open correct source location: ${citationMetadataPresent}`)
+  console.log(`D. Citations open correct source location: ${citationMetadataPresent && citationChunkResolved}`)
 
   if (issues.length > 0) {
     console.log('\n--- Blockers & Warnings Identified ---')

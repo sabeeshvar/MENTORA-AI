@@ -477,40 +477,100 @@ export const updateMaterialProcessingStatus = async (
 // 4. Multimodal Chunks
 // ==========================================
 
+const isValidUUID = (id?: string | null): boolean =>
+  typeof id === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+
+const parseEmbedding = (val: any): number[] | undefined => {
+  if (Array.isArray(val)) return val
+  if (typeof val === 'string') {
+    try {
+      const parsed = JSON.parse(val)
+      if (Array.isArray(parsed)) return parsed
+    } catch {
+      const nums = val.replace(/^\[|\]$/g, '').split(',').map((x) => Number(x.trim()))
+      if (nums.every((n) => !isNaN(n))) return nums
+    }
+  }
+  return undefined
+}
+
 export const saveMaterialChunks = async (
   courseId: string,
   materialId: string,
   chunks: ProcessedChunk[]
 ): Promise<void> => {
-  localStorage.setItem(`mentora_chunks_${courseId}_${materialId}`, JSON.stringify(chunks))
+  if (!chunks || chunks.length === 0) {
+    return
+  }
 
-  if (isSupabaseConfigured()) {
-    try {
-      const records = chunks.map((c) => ({
-        course_id: courseId,
-        material_id: materialId,
-        chunk_index: c.chunkIndex,
-        content: c.content || c.text || '',
-        page_number: c.pageNumber || null,
-        slide_number: c.slideNumber || null,
-        video_timestamp: c.videoTimestamp || null,
-        token_count: c.tokenCount || 0,
-        topic_id: c.topicId || null,
-        concept_id: c.conceptId || null,
-        metadata: {
-          sectionTitle: c.sectionTitle,
-          materialName: c.materialName,
-          materialType: c.materialType,
-          diagramDescription: c.diagramDescription,
-        },
-      }))
-      const { error } = await supabase.from('course_chunks').insert(records)
-      if (error) {
-        console.warn('Supabase saveMaterialChunks failed:', error.message)
-      }
-    } catch (err) {
-      console.warn('Supabase saveMaterialChunks failed:', err)
+  // 1. Strict validation of extracted chunks - ensure canonical content exists
+  for (let i = 0; i < chunks.length; i++) {
+    const c = chunks[i]
+    const content = (c.content && c.content.trim().length > 0)
+      ? c.content.trim()
+      : (c.text && c.text.trim().length > 0)
+      ? c.text.trim()
+      : null
+
+    if (!content) {
+      throw new Error(
+        `Chunk validation failed at index ${c.chunkIndex ?? i}: content and text are both missing or empty.`
+      )
     }
+  }
+
+  // 2. Expected local/offline fallback (when Supabase is unconfigured or non-UUID test identifiers are used)
+  if (!isSupabaseConfigured() || !isValidUUID(courseId) || !isValidUUID(materialId)) {
+    localStorage.setItem(`mentora_chunks_${courseId}_${materialId}`, JSON.stringify(chunks))
+    return
+  }
+
+  // 3. Remote Supabase persistence
+  const records = chunks.map((c, i) => {
+    const content = (c.content && c.content.trim().length > 0)
+      ? c.content.trim()
+      : (c.text && c.text.trim().length > 0)
+      ? c.text.trim()
+      : ''
+
+    return {
+      course_id: courseId,
+      material_id: materialId,
+      chunk_index: c.chunkIndex !== undefined && c.chunkIndex !== null ? c.chunkIndex : i,
+      content,
+      page_number: c.pageNumber !== undefined && c.pageNumber !== null ? c.pageNumber : null,
+      slide_number: c.slideNumber !== undefined && c.slideNumber !== null ? c.slideNumber : null,
+      video_timestamp: c.videoTimestamp || (c.startTimestamp ? `${c.startTimestamp}-${c.endTimestamp || ''}` : null),
+      token_count: c.tokenCount !== undefined && c.tokenCount !== null ? c.tokenCount : (c.charCount ? Math.ceil(c.charCount / 4) : 0),
+      topic_id: c.topicId || null,
+      concept_id: c.conceptId || null,
+      metadata: {
+        sectionTitle: c.sectionTitle || '',
+        sourceName: c.sourceName || c.materialName || '',
+        materialName: c.materialName || c.sourceName || '',
+        materialType: c.materialType || c.sourceType || 'PDF',
+        sourceType: c.sourceType || c.materialType || 'PDF',
+        diagramDescription: c.diagramDescription || null,
+        startTimestamp: c.startTimestamp || null,
+        endTimestamp: c.endTimestamp || null,
+        charCount: c.charCount || content.length,
+        wordCount: c.wordCount || content.split(/\s+/).filter(Boolean).length,
+        embeddingModel: c.embeddingModel || null,
+        originalChunkId: c.chunkId || null,
+        pageNumber: c.pageNumber ?? null,
+        slideNumber: c.slideNumber ?? null,
+      },
+      embedding: c.embedding && Array.isArray(c.embedding) && c.embedding.length === 256 ? c.embedding : null,
+    }
+  })
+
+  const { error } = await supabase.from('course_chunks').insert(records)
+  if (error) {
+    console.error('Remote Supabase insert failed for course_chunks:', error)
+    throw new Error(
+      `Failed to persist course chunks to remote database: [${error.code || 'UNKNOWN'}] ${error.message}`
+    )
   }
 }
 
@@ -518,16 +578,7 @@ export const getMaterialChunks = async (
   courseId: string,
   materialId: string
 ): Promise<ProcessedChunk[]> => {
-  const local = localStorage.getItem(`mentora_chunks_${courseId}_${materialId}`)
-  if (local) {
-    try {
-      return JSON.parse(local)
-    } catch {
-      // Ignore
-    }
-  }
-
-  if (isSupabaseConfigured()) {
+  if (isSupabaseConfigured() && isValidUUID(courseId) && isValidUUID(materialId)) {
     try {
       const { data, error } = await supabase
         .from('course_chunks')
@@ -536,31 +587,50 @@ export const getMaterialChunks = async (
         .eq('material_id', materialId)
         .order('chunk_index', { ascending: true })
 
-      if (!error && data) {
+      if (!error && data && data.length > 0) {
         return data.map((d) => ({
           chunkId: d.id,
           courseId: d.course_id,
           materialId: d.material_id,
           chunkIndex: d.chunk_index,
           text: d.content || '',
-          sourceType: (d.metadata?.materialType as any) || 'PDF',
-          sourceName: d.metadata?.materialName || 'Course Document',
-          content: d.content,
-          pageNumber: d.page_number,
-          slideNumber: d.slide_number,
-          videoTimestamp: d.video_timestamp,
+          content: d.content || '',
+          sourceType: (d.metadata?.sourceType || d.metadata?.materialType || 'PDF') as any,
+          sourceName: d.metadata?.sourceName || d.metadata?.materialName || 'Course Document',
+          pageNumber: d.page_number ?? d.metadata?.pageNumber ?? undefined,
+          slideNumber: d.slide_number ?? d.metadata?.slideNumber ?? undefined,
+          videoTimestamp: d.video_timestamp ?? d.metadata?.videoTimestamp ?? undefined,
+          startTimestamp: d.metadata?.startTimestamp ?? undefined,
+          endTimestamp: d.metadata?.endTimestamp ?? undefined,
           tokenCount: d.token_count,
           sectionTitle: d.metadata?.sectionTitle || '',
-          materialName: d.metadata?.materialName,
-          materialType: d.metadata?.materialType,
+          materialName: d.metadata?.materialName || d.metadata?.sourceName,
+          materialType: d.metadata?.materialType || d.metadata?.sourceType,
           topicId: d.topic_id,
           conceptId: d.concept_id,
           diagramDescription: d.metadata?.diagramDescription,
+          charCount: d.metadata?.charCount,
+          wordCount: d.metadata?.wordCount,
+          embedding: parseEmbedding(d.embedding),
+          embeddingModel: d.metadata?.embeddingModel,
           createdAt: d.created_at,
         }))
       }
+
+      if (error) {
+        console.warn('Supabase getMaterialChunks query warning:', error.message)
+      }
     } catch (err) {
-      console.warn('Supabase getMaterialChunks failed:', err)
+      console.warn('Supabase getMaterialChunks failed, checking fallback:', err)
+    }
+  }
+
+  const local = localStorage.getItem(`mentora_chunks_${courseId}_${materialId}`)
+  if (local) {
+    try {
+      return JSON.parse(local)
+    } catch {
+      // Ignore
     }
   }
 

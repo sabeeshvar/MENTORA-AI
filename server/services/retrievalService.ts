@@ -86,16 +86,30 @@ export class CoursePartitionedVectorStore implements IVectorStoreBackend {
       this.courseIndex.set(courseId, courseMap)
     }
 
-    for (const chunk of chunks) {
+    for (let idx = 0; idx < chunks.length; idx++) {
+      const chunk = chunks[idx]
+      const rawEmb: any = chunk.embedding
+      if (typeof rawEmb === 'string') {
+        try {
+          chunk.embedding = JSON.parse(rawEmb)
+        } catch {
+          chunk.embedding = rawEmb
+            .replace(/^\[|\]$/g, '')
+            .split(',')
+            .map((x: string) => Number(x.trim()))
+        }
+      }
+
       // If chunk is missing an embedding, compute it deterministically
-      if (!chunk.embedding || chunk.embedding.length === 0) {
+      if (!chunk.embedding || !Array.isArray(chunk.embedding) || chunk.embedding.length === 0) {
         chunk.embedding = await this.embeddingService.generateEmbedding(
-          `${chunk.sectionTitle}: ${chunk.text}`
+          `${chunk.sectionTitle || 'Section'}: ${chunk.text || chunk.content || ''}`
         )
         chunk.embeddingModel = this.embeddingService.modelName
       }
 
-      courseMap.set(chunk.chunkId, chunk)
+      const id = chunk.chunkId || (chunk as any).id || `chunk_${idx}`
+      courseMap.set(id, chunk)
     }
   }
 

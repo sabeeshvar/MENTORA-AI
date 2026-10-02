@@ -198,6 +198,7 @@ export const processUploadedMaterial = async (
       totalChunks: chunks.length,
       totalPagesOrSlides: extractedPages.length,
       processedAt: new Date().toISOString(),
+      status: 'processed' as const,
     }
   } catch (error: any) {
     const errorMsg = error?.message || 'Failed to process learning material'

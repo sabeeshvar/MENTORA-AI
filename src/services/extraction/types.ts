@@ -31,4 +31,5 @@ export interface ProcessMaterialResult {
   totalChunks: number
   totalPagesOrSlides: number
   processedAt: string
+  status?: 'processed' | 'failed'
 }
