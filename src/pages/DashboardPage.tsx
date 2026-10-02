@@ -368,6 +368,49 @@ export const DashboardPage: React.FC = () => {
         </div>
       </div>
 
+      {/* 1.5 New Learner Initial Diagnostic Calibration Callout */}
+      {!isDemoMode && realCourses.length > 0 && realAttempts.length === 0 && (
+        <Card className="p-6 bg-gradient-to-r from-emerald-950/70 via-slate-900/90 to-teal-950/60 border-2 border-emerald-500/40 rounded-3xl shadow-xl shadow-emerald-950/20 animate-in fade-in duration-300">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1.5 max-w-2xl">
+              <div className="flex items-center gap-2">
+                <Badge variant="emerald" size="sm" className="font-extrabold uppercase tracking-wider text-[10px]">
+                  New Learner Intake
+                </Badge>
+                <span className="text-xs text-emerald-400 font-semibold flex items-center gap-1">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Diagnostic Calibration
+                </span>
+              </div>
+              <h2 className="text-lg font-bold text-white">
+                Let&apos;s quickly calibrate your starting knowledge level!
+              </h2>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Take a quick 3-question adaptive diagnostic quiz for{' '}
+                <strong className="text-emerald-300">{realCourses[0].title}</strong>. This baseline
+                initializes your personalized mastery graph and calibrates your tailored study recommendations.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3 shrink-0">
+              <Button
+                variant="primary"
+                size="md"
+                onClick={() =>
+                  navigate(
+                    `/quizzes?courseId=${realCourses[0].courseId}&diagnostic=true&topic=Core%20Concepts`
+                  )
+                }
+                className="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black shadow-lg shadow-emerald-500/20"
+                rightIcon={<Play className="w-4 h-4 fill-slate-950" />}
+              >
+                Start Diagnostic
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
+
       {/* 2. Top Metric Cards: Real Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Overall Mastery */}

@@ -14,16 +14,20 @@ import {
   Layers,
   ArrowRight,
   Info,
+  ExternalLink,
+  TrendingUp,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { Card } from '@/components/common/Card'
 import { Button } from '@/components/common/Button'
 import { Badge } from '@/components/common/Badge'
+import { ChunkViewerModal } from '@/components/materials/ChunkViewerModal'
 import {
   getUserCourses,
   getCourseMaterials,
   getMaterialChunks,
 } from '@/lib/supabase/db'
+import { MasteryService } from '@/services/masteryService'
 import {
   askAITutor,
   checkAIStatus,
@@ -65,6 +69,55 @@ export const StudyPage: React.FC = () => {
   const [isThinking, setIsThinking] = useState(false)
   const [thinkingStage, setThinkingStage] = useState('Consulting course materials...')
   const [errorBanner, setErrorBanner] = useState<string | null>(null)
+  const [masteryBanner, setMasteryBanner] = useState<string | null>(null)
+
+  // Chunk Viewer Modal State for Click-to-Open Citations
+  const [viewerModalState, setViewerModalState] = useState<{
+    isOpen: boolean
+    material: CourseMaterial | null
+    initialChunkId?: string
+    initialPageNumber?: number
+    initialSlideNumber?: number
+    initialVideoTimestamp?: string
+    highlightText?: string
+  }>({
+    isOpen: false,
+    material: null,
+  })
+
+  const handleCitationClick = (src: SourceCitation) => {
+    // Attempt to match material by name
+    const mat = materials.find(
+      (m) =>
+        m.name.toLowerCase() === src.materialName.toLowerCase() ||
+        src.materialName.toLowerCase().includes(m.name.toLowerCase()) ||
+        m.name.toLowerCase().includes(src.materialName.toLowerCase())
+    ) || {
+      materialId: (src as any).materialId || 'temp_mat',
+      courseId: selectedCourseId,
+      name: src.materialName,
+      type: src.materialName.toLowerCase().endsWith('.pdf')
+        ? 'PDF'
+        : src.materialName.toLowerCase().endsWith('.pptx') || src.materialName.toLowerCase().endsWith('.ppt')
+        ? 'PPTX'
+        : 'VIDEO',
+      sizeBytes: 0,
+      downloadURL: '',
+      storagePath: '',
+      uploadedAt: new Date().toISOString(),
+      processingStatus: 'ready' as const,
+    }
+
+    setViewerModalState({
+      isOpen: true,
+      material: mat,
+      initialChunkId: (src as any).chunkId,
+      initialPageNumber: src.pageNumber ?? undefined,
+      initialSlideNumber: src.slideNumber ?? undefined,
+      initialVideoTimestamp: src.videoTimestamp || (src as any).startTimestamp,
+      highlightText: src.relevantText,
+    })
+  }
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -184,6 +237,54 @@ export const StudyPage: React.FC = () => {
       }
 
       setMessages((prev) => [...prev, assistantMessage])
+
+      // Priority 7: Lightweight Conversational Mastery Signal
+      // If student message looks explanatory rather than a basic question, evaluate asynchronously
+      if (user && selectedCourseId && query.length >= 25) {
+        const isPureQuestion =
+          /^(what|how|why|when|where|who|can you|explain|tell me|give me|could you)\b/i.test(query.trim()) &&
+          query.trim().endsWith('?')
+
+        if (!isPureQuestion) {
+          fetch('/api/ai/tutor/evaluate-understanding', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: query,
+              courseId: selectedCourseId,
+              contextChunks: courseChunks.slice(0, 4).map((c) => ({
+                content: c.text,
+                metadata: {
+                  pageNumber: c.pageNumber,
+                  slideNumber: c.slideNumber,
+                  videoTimestamp: c.videoTimestamp,
+                  sectionTitle: c.sectionTitle,
+                  diagramDescription: c.diagramDescription,
+                },
+              })),
+            }),
+          })
+            .then((res) => res.json())
+            .then(async (data) => {
+              if (data.isExplanatory && data.confidence >= 0.7 && data.topic) {
+                const updated = await MasteryService.processConversationalMastery(
+                  user.uid,
+                  selectedCourseId,
+                  data.topic,
+                  data.conceptualAccuracy ?? 0.8,
+                  data.confidence
+                )
+                if (updated) {
+                  setMasteryBanner(
+                    `Topic Mastery calibrated from explanation: ${data.topic} (${Math.round(updated.masteryScore * 100)}%)`
+                  )
+                  setTimeout(() => setMasteryBanner(null), 6000)
+                }
+              }
+            })
+            .catch((err) => console.debug('Conversational mastery eval skipped:', err))
+        }
+      }
     } catch (err: any) {
       console.error('Tutor query error:', err)
       const errorMsg =
@@ -330,6 +431,22 @@ export const StudyPage: React.FC = () => {
         </div>
       )}
 
+      {/* Priority 7: Conversational Mastery Live Feedback Banner */}
+      {masteryBanner && (
+        <div className="p-3 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 text-xs flex items-center justify-between gap-3 animate-in fade-in duration-300">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="font-medium">{masteryBanner}</span>
+          </div>
+          <button
+            onClick={() => setMasteryBanner(null)}
+            className="text-emerald-400 hover:text-white font-bold text-xs"
+          >
+            &times;
+          </button>
+        </div>
+      )}
+
       {/* Main Chat Area */}
       <Card className="flex-1 flex flex-col bg-slate-900/60 border-slate-800/80 rounded-3xl overflow-hidden min-h-0 shadow-xl">
         {/* Messages Scrollable List */}
@@ -456,7 +573,17 @@ export const StudyPage: React.FC = () => {
                         {msg.sources.map((src, i) => (
                           <div
                             key={i}
-                            className="p-3 rounded-xl bg-slate-900/90 border border-emerald-500/20 space-y-1.5"
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => handleCitationClick(src)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault()
+                                handleCitationClick(src)
+                              }
+                            }}
+                            className="p-3 rounded-xl bg-slate-900/90 border border-emerald-500/20 hover:border-emerald-400 hover:bg-slate-800/90 hover:shadow-lg hover:shadow-emerald-950/30 transition-all cursor-pointer space-y-1.5 group text-left"
+                            title="Click to open source chunk viewer at this exact location"
                           >
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center gap-1.5 text-xs font-bold text-white truncate">
@@ -467,10 +594,12 @@ export const StudyPage: React.FC = () => {
                                 ) : (
                                   <Presentation className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                                 )}
-                                <span className="truncate">{src.materialName}</span>
+                                <span className="truncate group-hover:text-emerald-300 transition-colors">
+                                  {src.materialName}
+                                </span>
                               </div>
 
-                              <div className="shrink-0 flex items-center gap-1">
+                              <div className="shrink-0 flex items-center gap-1.5">
                                 {src.pageNumber !== null && src.pageNumber !== undefined && (
                                   <Badge variant="rose" size="sm" className="text-[10px]">
                                     Page {src.pageNumber}
@@ -486,11 +615,15 @@ export const StudyPage: React.FC = () => {
                                     {(src as any).startTimestamp}–{(src as any).endTimestamp || 'End'}
                                   </Badge>
                                 )}
+                                <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 opacity-80 group-hover:opacity-100 font-semibold transition-opacity ml-1">
+                                  <ExternalLink className="w-3 h-3" />
+                                  <span>View Source</span>
+                                </span>
                               </div>
                             </div>
 
                             {src.relevantText && (
-                              <p className="text-[11px] text-slate-300 italic pl-2.5 border-l-2 border-emerald-500/60 leading-relaxed bg-slate-950/40 py-1 rounded-r-lg">
+                              <p className="text-[11px] text-slate-300 italic pl-2.5 border-l-2 border-emerald-500/60 leading-relaxed bg-slate-950/40 py-1 rounded-r-lg group-hover:text-white transition-colors">
                                 &ldquo;{src.relevantText}&rdquo;
                               </p>
                             )}
@@ -562,6 +695,20 @@ export const StudyPage: React.FC = () => {
           </form>
         </div>
       </Card>
+
+      {/* Click-to-Open Citation Chunk Viewer Modal */}
+      <ChunkViewerModal
+        isOpen={viewerModalState.isOpen}
+        onClose={() => setViewerModalState((prev) => ({ ...prev, isOpen: false }))}
+        material={viewerModalState.material}
+        courseId={selectedCourseId}
+        initialChunkId={viewerModalState.initialChunkId}
+        initialPageNumber={viewerModalState.initialPageNumber}
+        initialSlideNumber={viewerModalState.initialSlideNumber}
+        initialVideoTimestamp={viewerModalState.initialVideoTimestamp}
+        highlightText={viewerModalState.highlightText}
+        fallbackChunks={courseChunks}
+      />
     </div>
   )
 }

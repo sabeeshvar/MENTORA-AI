@@ -110,10 +110,43 @@ export const extractPdfPages = async (
         }
       }
 
+      let diagramDescription: string | undefined = undefined
+      let visualElements: string[] | undefined = undefined
+      let figureType: string | undefined = undefined
+
+      if (!cleanPageText || cleanPageText.length < 40) {
+        try {
+          const res = await fetch('/api/ai/vision/describe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pageOrSlideNumber: pageNum,
+              title,
+              documentContext: cleanPageText,
+            }),
+          })
+          if (res.ok) {
+            const vis = await res.json()
+            diagramDescription = vis.diagramDescription
+            visualElements = vis.visualElements
+            figureType = vis.figureType
+          }
+        } catch {
+          // Offline / test fallback
+        }
+      }
+
+      const fullText = diagramDescription
+        ? (cleanPageText ? `${cleanPageText}\n\n[Visual Diagram Analysis - ${figureType || 'Diagram'}: ${diagramDescription}]` : `[Visual Diagram Analysis - ${figureType || 'Diagram'}: ${diagramDescription}]`)
+        : cleanPageText || `[Page ${pageNum}: Structured visual chart and component diagram]`
+
       extractedPages.push({
         pageNumber: pageNum,
         title,
-        text: cleanPageText || `[Page ${pageNum}: Diagram or Image content]`,
+        text: fullText,
+        diagramDescription,
+        visualElements,
+        figureType,
       })
     }
 

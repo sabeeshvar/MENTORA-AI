@@ -16,6 +16,8 @@ export interface GenerateQuizApiParams {
   questionTypes?: QuestionType[]
   chunks?: ProcessedChunk[]
   preferredLanguage?: string
+  priorQuestionTexts?: string[]
+  priorQuestionHashes?: string[]
 }
 
 export interface GeneratedQuizApiResponse {

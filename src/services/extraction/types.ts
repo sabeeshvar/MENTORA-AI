@@ -4,8 +4,14 @@ import type { ProcessedChunk } from '@/types/chunk'
 export interface ExtractedPage {
   pageNumber?: number
   slideNumber?: number
+  videoTimestamp?: string
+  startTimestamp?: string
+  endTimestamp?: string
   title?: string
   text: string
+  diagramDescription?: string
+  visualElements?: string[]
+  figureType?: string
 }
 
 export type ExtractionProgressCallback = (stage: string, percent: number) => void

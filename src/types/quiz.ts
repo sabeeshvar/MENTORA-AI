@@ -26,6 +26,9 @@ export interface QuizQuestion {
   unit?: string // Unit e.g. 'm/s', 'Hz'
   explanation: string
   source: QuestionSourceCitation
+  questionHash?: string
+  isVerified?: boolean
+  verificationNotes?: string
   createdAt: string
 }
 

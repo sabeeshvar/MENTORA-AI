@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Award,
   Sparkles,
@@ -45,6 +46,10 @@ import type {
 export const QuizzesPage: React.FC = () => {
   const { user } = useAuth()
   const { language } = useTranslation()
+  const [searchParams] = useSearchParams()
+  const isDiagnosticParam = searchParams.get('diagnostic') === 'true'
+  const urlCourseId = searchParams.get('courseId')
+  const urlTopic = searchParams.get('topic')
 
   // State: Courses & Materials
   const [courses, setCourses] = useState<Course[]>([])
@@ -65,6 +70,7 @@ export const QuizzesPage: React.FC = () => {
   const [genTypes, setGenTypes] = useState<QuestionType[]>(['mcq', 'short_answer', 'numerical'])
   const [isGenerating, setIsGenerating] = useState(false)
   const [genError, setGenError] = useState<string | null>(null)
+  const [isDiagnosticGenerating, setIsDiagnosticGenerating] = useState(false)
 
   // State: Active Quiz Taking Mode
   const [activeQuiz, setActiveQuiz] = useState<Quiz | null>(null)
@@ -94,12 +100,16 @@ export const QuizzesPage: React.FC = () => {
     getUserCourses(user.uid)
       .then((data) => {
         setCourses(data)
-        if (data.length > 0 && !selectedCourseId) {
-          setSelectedCourseId(data[0].courseId)
+        if (data.length > 0) {
+          if (urlCourseId && data.some((c) => c.courseId === urlCourseId)) {
+            setSelectedCourseId(urlCourseId)
+          } else if (!selectedCourseId) {
+            setSelectedCourseId(data[0].courseId)
+          }
         }
       })
       .catch((err) => console.warn('Failed to load courses for quiz:', err))
-  }, [user])
+  }, [user, urlCourseId])
 
   // Load Course Chunks & Quizzes when Course is selected
   useEffect(() => {
@@ -143,6 +153,28 @@ export const QuizzesPage: React.FC = () => {
     }
   }
 
+  // Gather historical questions to prevent repeats
+  const getHistoricalQuestionsAndHashes = () => {
+    const priorTexts: string[] = []
+    const priorHashes: string[] = []
+    for (const q of savedQuizzes) {
+      for (const question of q.questions) {
+        if (question.question) priorTexts.push(question.question)
+        if (question.questionHash) priorHashes.push(question.questionHash)
+      }
+    }
+    for (const a of recentAttempts) {
+      if (a.results) {
+        for (const r of a.results) {
+          if (r.studentAnswer && r.correctAnswer) {
+            priorTexts.push(r.correctAnswer)
+          }
+        }
+      }
+    }
+    return { priorTexts, priorHashes }
+  }
+
   // Handle Quiz Generation
   const handleGenerateQuiz = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -155,6 +187,8 @@ export const QuizzesPage: React.FC = () => {
     setIsGenerating(true)
     setGenError(null)
 
+    const { priorTexts, priorHashes } = getHistoricalQuestionsAndHashes()
+
     try {
       const generated = await generateGroundedQuizApi({
         courseId: selectedCourseId,
@@ -164,6 +198,8 @@ export const QuizzesPage: React.FC = () => {
         questionTypes: genTypes,
         chunks: courseChunks,
         preferredLanguage: language,
+        priorQuestionTexts: priorTexts,
+        priorQuestionHashes: priorHashes,
       })
 
       const newQuiz: Quiz = {
@@ -188,6 +224,56 @@ export const QuizzesPage: React.FC = () => {
       setGenError(err?.message || 'Failed to generate grounded quiz. Verify server and GEMINI_API_KEY.')
     } finally {
       setIsGenerating(false)
+    }
+  }
+
+  // Handle Priority 6: New Learner Diagnostic Calibration
+  const handleStartDiagnostic = async () => {
+    if (!selectedCourseId || !user) return
+    if (courseChunks.length === 0) {
+      setGenError('Cannot generate diagnostic without course material. Please upload materials first.')
+      return
+    }
+
+    setIsDiagnosticGenerating(true)
+    setGenError(null)
+
+    const { priorTexts, priorHashes } = getHistoricalQuestionsAndHashes()
+    const diagnosticTopic = urlTopic || 'Core Foundations'
+
+    try {
+      const generated = await generateGroundedQuizApi({
+        courseId: selectedCourseId,
+        topic: diagnosticTopic,
+        difficulty: 'adaptive',
+        numberOfQuestions: 3,
+        questionTypes: ['mcq', 'short_answer'],
+        chunks: courseChunks,
+        preferredLanguage: language,
+        priorQuestionTexts: priorTexts,
+        priorQuestionHashes: priorHashes,
+      })
+
+      const diagnosticQuiz: Quiz = {
+        quizId: generated.quizId,
+        courseId: selectedCourseId,
+        userId: user.uid,
+        topic: generated.topic,
+        title: `${generated.topic} — Baseline Diagnostic Calibration`,
+        difficulty: 'adaptive',
+        questions: generated.questions,
+        createdAt: new Date().toISOString(),
+        isDiagnostic: true,
+      }
+
+      await saveQuiz(diagnosticQuiz)
+      setSavedQuizzes((prev) => [diagnosticQuiz, ...prev])
+      startQuiz(diagnosticQuiz)
+    } catch (err: any) {
+      console.error('Diagnostic generation error:', err)
+      setGenError(err?.message || 'Failed to generate baseline diagnostic.')
+    } finally {
+      setIsDiagnosticGenerating(false)
     }
   }
 
@@ -286,6 +372,7 @@ export const QuizzesPage: React.FC = () => {
       const totalCount = activeQuiz.questions.length
       const accuracyPct = Math.round((correctCount / totalCount) * 100)
       const durationSecs = Math.max(1, Math.round((Date.now() - quizStartTime) / 1000))
+      const isDiag = !!activeQuiz.isDiagnostic
 
       const attempt: QuizAttempt = {
         attemptId: `att_${Date.now()}`,
@@ -300,10 +387,15 @@ export const QuizzesPage: React.FC = () => {
         timeSpentSeconds: durationSecs,
         completedAt: new Date().toISOString(),
         results: quizResults,
+        isDiagnostic: isDiag,
       }
 
       setSavedAttempt(attempt)
       setQuizFinished(true)
+
+      if (isDiag && user) {
+        localStorage.setItem(`mentora_diagnostic_completed_${user.uid}_${activeQuiz.courseId}`, 'true')
+      }
 
       // Trigger Mastery Engine and Adaptive Recommendation update
       if (user) {
@@ -838,6 +930,66 @@ export const QuizzesPage: React.FC = () => {
           </div>
         </Card>
       )}
+
+      {/* Priority 6: New Learner Diagnostic Intake Calibration */}
+      {selectedCourseId &&
+        (isDiagnosticParam ||
+          (recentAttempts.length === 0 &&
+            typeof window !== 'undefined' &&
+            !localStorage.getItem(`mentora_diagnostic_completed_${user?.uid}_${selectedCourseId}`))) && (
+          <Card className="p-6 bg-gradient-to-r from-indigo-950/70 via-purple-950/50 to-slate-900 border-indigo-500/40 shadow-xl space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-500/20 border border-indigo-500/40 text-indigo-400 flex items-center justify-center shrink-0">
+                  <Sparkles className="w-6 h-6 animate-pulse" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/30">
+                      Track D Baseline Calibration
+                    </span>
+                    <Badge variant="indigo" size="sm">
+                      First-Time Learner
+                    </Badge>
+                  </div>
+                  <h3 className="text-base font-extrabold text-white mt-1">
+                    Let&apos;s quickly understand your starting level.
+                  </h3>
+                  <p className="text-xs text-slate-300 mt-1 max-w-xl">
+                    Take a fast 3-question diagnostic calibrated directly from your course materials.
+                    This establishes your starting baseline mastery without guesswork and tailors your study plan.
+                  </p>
+                </div>
+              </div>
+
+              <Button
+                size="md"
+                variant="primary"
+                onClick={handleStartDiagnostic}
+                disabled={isDiagnosticGenerating || courseChunks.length === 0}
+                leftIcon={
+                  isDiagnosticGenerating ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Play className="w-4 h-4 fill-white" />
+                  )
+                }
+                className="bg-indigo-600 hover:bg-indigo-500 text-white shrink-0 shadow-lg shadow-indigo-950/50"
+              >
+                {isDiagnosticGenerating
+                  ? 'Generating Diagnostic...'
+                  : courseChunks.length === 0
+                  ? 'Upload Course Material First'
+                  : 'Start Diagnostic Calibration'}
+              </Button>
+            </div>
+            {courseChunks.length === 0 && (
+              <p className="text-[11px] text-amber-300">
+                Notice: Cannot fabricate diagnostic questions without real material. Please upload a PDF or lecture slide first.
+              </p>
+            )}
+          </Card>
+        )}
 
       {/* Section 1: Available Grounded Quizzes */}
       <div className="space-y-4">

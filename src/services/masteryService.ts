@@ -232,4 +232,53 @@ export class MasteryService {
     if (pct < 75) return 'medium'
     return 'hard'
   }
+
+  /**
+   * Priority 7: Lightweight Conversational Mastery Calibration
+   * Evaluates conceptual understanding from student's spontaneous explanatory chat answers
+   * Updates topic mastery only when confidence is high (>= 0.70)
+   */
+  public static async processConversationalMastery(
+    userId: string,
+    courseId: string,
+    topic: string,
+    conceptualAccuracy: number,
+    confidence: number
+  ): Promise<TopicMastery | null> {
+    if (!userId || !topic || confidence < 0.7) return null
+
+    const topicId = topic.toLowerCase().replace(/[^a-z0-9]/g, '_')
+    const existing = await getTopicMastery(userId, topicId)
+
+    const currentScore = existing?.masteryScore ?? 0.5
+    const attemptsCount = (existing?.attempts ?? 0) + 1
+    const isUnderstood = conceptualAccuracy >= 0.7
+    const correctCount = (existing?.correctAnswers ?? 0) + (isUnderstood ? 1 : 0)
+    const incorrectCount = (existing?.incorrectAnswers ?? 0) + (isUnderstood ? 0 : 1)
+
+    const { newScore, trend } = this.calculateUpdatedMastery(
+      currentScore,
+      isUnderstood,
+      'medium',
+      attemptsCount
+    )
+
+    const updated: TopicMastery = {
+      topicId,
+      courseId,
+      userId,
+      topicName: topic,
+      masteryScore: newScore,
+      attempts: attemptsCount,
+      correctAnswers: correctCount,
+      incorrectAnswers: incorrectCount,
+      lastAttemptAt: new Date().toISOString(),
+      difficultyLevel: 'medium',
+      trend,
+      updatedAt: new Date().toISOString(),
+    }
+
+    await saveTopicMastery(updated)
+    return updated
+  }
 }

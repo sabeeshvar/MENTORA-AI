@@ -7,6 +7,7 @@ import { extractPdfPages } from './pdfExtractor'
 import { extractPptxSlides } from './pptxExtractor'
 import { createChunksFromExtractedPages } from './chunkingService'
 import { defaultEmbeddingService } from './embedding'
+import { WhisperSpeechToTextProvider } from './videoExtractor'
 import type {
   ExtractedPage,
   ExtractionProgressCallback,
@@ -51,11 +52,25 @@ export class DocumentExtractionManager implements IExtractionService {
     }
 
     if (fileType === 'MP4') {
-      // Future transcription support
+      const provider = new WhisperSpeechToTextProvider()
+      const buffer = data instanceof ArrayBuffer ? data : data.buffer
+      const segments = await provider.transcribe(buffer as ArrayBuffer, _fileName, onProgress)
+      if (segments && segments.length > 0) {
+        return segments.map((seg) => ({
+          title: `Lecture Segment [${seg.startTimestamp} - ${seg.endTimestamp}]`,
+          text: seg.text,
+          startTimestamp: seg.startTimestamp,
+          endTimestamp: seg.endTimestamp,
+          videoTimestamp: `${seg.startTimestamp} - ${seg.endTimestamp}`,
+        }))
+      }
       return [
         {
-          title: 'Video Transcript',
-          text: `Audio/video transcription for ${_fileName} is prepared for processing.`,
+          title: 'Lecture Transcript',
+          text: `Video transcription for ${_fileName}.`,
+          startTimestamp: '00:00',
+          endTimestamp: '01:00',
+          videoTimestamp: '00:00 - 01:00',
         },
       ]
     }

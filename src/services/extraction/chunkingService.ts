@@ -33,14 +33,18 @@ export const createChunksFromExtractedPages = (
   const chunks: ProcessedChunk[] = []
   let globalChunkIndex = 0
   const now = new Date().toISOString()
-
   for (const page of pages) {
-    const cleanedText = cleanExtractedText(page.text)
+    let cleanedText = cleanExtractedText(page.text)
+    if (page.diagramDescription && !cleanedText.includes(page.diagramDescription)) {
+      cleanedText = cleanedText
+        ? `${cleanedText}\n\n[Visual Figure / Diagram Analysis: ${page.diagramDescription}]`
+        : `[Visual Figure / Diagram Analysis: ${page.diagramDescription}]`
+    }
     if (!cleanedText) continue
 
-    const pageNum = page.pageNumber
-    const slideNum = page.slideNumber
-    const sectionTitle = page.title?.trim() || (pageNum ? `Page ${pageNum}` : `Slide ${slideNum}`)
+    const pageNum = sourceType === 'PPTX' ? undefined : page.pageNumber
+    const slideNum = page.slideNumber ?? (sourceType === 'PPTX' ? page.pageNumber : undefined)
+    const sectionTitle = page.title?.trim() || (pageNum ? `Page ${pageNum}` : `Slide ${slideNum || page.pageNumber}`)
 
     // If page content is within normal chunk limit, keep as single chunk
     if (cleanedText.length <= maxChunkSize) {
@@ -56,6 +60,10 @@ export const createChunksFromExtractedPages = (
         sourceName,
         pageNumber: pageNum,
         slideNumber: slideNum,
+        videoTimestamp: page.videoTimestamp,
+        startTimestamp: page.startTimestamp,
+        endTimestamp: page.endTimestamp,
+        diagramDescription: page.diagramDescription,
         sectionTitle,
         chunkIndex: globalChunkIndex,
         createdAt: now,
@@ -86,6 +94,10 @@ export const createChunksFromExtractedPages = (
             sourceName,
             pageNumber: pageNum,
             slideNumber: slideNum,
+            videoTimestamp: page.videoTimestamp,
+            startTimestamp: page.startTimestamp,
+            endTimestamp: page.endTimestamp,
+            diagramDescription: page.diagramDescription,
             sectionTitle,
             chunkIndex: globalChunkIndex,
             createdAt: now,
@@ -112,6 +124,10 @@ export const createChunksFromExtractedPages = (
                 sourceName,
                 pageNumber: pageNum,
                 slideNumber: slideNum,
+                videoTimestamp: page.videoTimestamp,
+                startTimestamp: page.startTimestamp,
+                endTimestamp: page.endTimestamp,
+                diagramDescription: page.diagramDescription,
                 sectionTitle,
                 chunkIndex: globalChunkIndex,
                 createdAt: now,

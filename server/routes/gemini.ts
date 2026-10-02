@@ -92,8 +92,17 @@ geminiRouter.post('/tutor', async (req: Request, res: Response) => {
  * Adaptive Grounded Quiz Generator Endpoint
  */
 geminiRouter.post('/quiz/generate', async (req: Request, res: Response) => {
-  const { courseId, topic, difficulty, numberOfQuestions, questionTypes, chunks, preferredLanguage } =
-    req.body
+  const {
+    courseId,
+    topic,
+    difficulty,
+    numberOfQuestions,
+    questionTypes,
+    chunks,
+    preferredLanguage,
+    priorQuestionTexts,
+    priorQuestionHashes,
+  } = req.body
 
   if (!courseId || !topic) {
     return res.status(400).json({ error: 'courseId and topic are required' })
@@ -108,12 +117,101 @@ geminiRouter.post('/quiz/generate', async (req: Request, res: Response) => {
       questionTypes: Array.isArray(questionTypes) ? questionTypes : ['mcq', 'short_answer', 'numerical'],
       chunks: Array.isArray(chunks) ? chunks : undefined,
       preferredLanguage: typeof preferredLanguage === 'string' ? preferredLanguage : 'en',
+      priorQuestionTexts: Array.isArray(priorQuestionTexts) ? priorQuestionTexts : undefined,
+      priorQuestionHashes: Array.isArray(priorQuestionHashes) ? priorQuestionHashes : undefined,
     })
 
     return res.json(quiz)
   } catch (error: any) {
     return res.status(500).json({
       error: error?.message || 'Failed to generate quiz',
+    })
+  }
+})
+
+/**
+ * Question Verification Endpoint
+ */
+geminiRouter.post('/quiz/verify', async (req: Request, res: Response) => {
+  const { question, context } = req.body
+
+  if (!question) {
+    return res.status(400).json({ error: 'question is required' })
+  }
+
+  try {
+    const result = await geminiService.verifyQuestionQualityAndCorrectness(question, context || '')
+    return res.json(result)
+  } catch (error: any) {
+    return res.status(500).json({
+      error: error?.message || 'Question verification failed',
+    })
+  }
+})
+
+/**
+ * Multimodal Diagram & Figure Understanding Endpoint
+ */
+geminiRouter.post('/vision/describe', async (req: Request, res: Response) => {
+  const { imageBase64, mimeType, pageOrSlideNumber, documentContext, title } = req.body
+
+  try {
+    const result = await geminiService.describeDiagramOrVisual({
+      imageBase64,
+      mimeType,
+      pageOrSlideNumber,
+      documentContext,
+      title,
+    })
+    return res.json(result)
+  } catch (error: any) {
+    return res.status(500).json({
+      error: error?.message || 'Diagram vision description failed',
+    })
+  }
+})
+
+/**
+ * Multimodal Speech-to-Text Transcription Endpoint
+ */
+geminiRouter.post('/transcribe', async (req: Request, res: Response) => {
+  const { audioBase64, mimeType, fileName } = req.body
+
+  try {
+    const result = await geminiService.transcribeAudioOrVideo({
+      base64Data: audioBase64,
+      mimeType,
+      fileName,
+    })
+    return res.json(result)
+  } catch (error: any) {
+    return res.status(500).json({
+      error: error?.message || 'Video/audio transcription failed',
+    })
+  }
+})
+
+/**
+ * Conversational Mastery Understanding Endpoint
+ */
+geminiRouter.post('/tutor/evaluate-understanding', async (req: Request, res: Response) => {
+  const { courseId, studentStatement, courseTitle, chunks } = req.body
+
+  if (!courseId || !studentStatement) {
+    return res.status(400).json({ error: 'courseId and studentStatement are required' })
+  }
+
+  try {
+    const result = await geminiService.evaluateConversationalUnderstanding({
+      courseId: courseId.trim(),
+      studentStatement: String(studentStatement).trim(),
+      courseTitle,
+      chunks: Array.isArray(chunks) ? chunks : undefined,
+    })
+    return res.json(result)
+  } catch (error: any) {
+    return res.status(500).json({
+      error: error?.message || 'Conversational mastery evaluation failed',
     })
   }
 })

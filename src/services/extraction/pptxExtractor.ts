@@ -135,10 +135,55 @@ export const extractPptxSlides = async (
         const xmlText = await fileObj.async('text')
         const { title, text } = parseSlideXml(xmlText, slideFile.index)
 
+        let diagramDescription: string | undefined = undefined
+        let visualElements: string[] | undefined = undefined
+        let figureType: string | undefined = undefined
+
+        // Look for image in media directory matching this slide if present
+        const mediaFiles = zip.file(/^ppt\/media\/image\d+\.(png|jpe?g)/i)
+        let imgBase64: string | undefined = undefined
+        if (mediaFiles && mediaFiles.length > 0) {
+          const matchingMedia = mediaFiles[i % mediaFiles.length]
+          if (matchingMedia) {
+            imgBase64 = await matchingMedia.async('base64')
+          }
+        }
+
+        if (!text || text.length < 40 || imgBase64) {
+          try {
+            const res = await fetch('/api/ai/vision/describe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                imageBase64: imgBase64,
+                mimeType: 'image/png',
+                pageOrSlideNumber: slideFile.index,
+                title,
+                documentContext: text,
+              }),
+            })
+            if (res.ok) {
+              const vis = await res.json()
+              diagramDescription = vis.diagramDescription
+              visualElements = vis.visualElements
+              figureType = vis.figureType
+            }
+          } catch {
+            // Offline / test fallback
+          }
+        }
+
+        const fullText = diagramDescription
+          ? (text ? `${text}\n\n[Visual Diagram Analysis - ${figureType || 'Diagram'}: ${diagramDescription}]` : `[Visual Diagram Analysis - ${figureType || 'Diagram'}: ${diagramDescription}]`)
+          : text || `[Slide ${slideFile.index}: Structured visual presentation components]`
+
         extractedSlides.push({
           slideNumber: slideFile.index,
           title,
-          text,
+          text: fullText,
+          diagramDescription,
+          visualElements,
+          figureType,
         })
       }
     }

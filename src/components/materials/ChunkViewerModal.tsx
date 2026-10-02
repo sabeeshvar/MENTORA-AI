@@ -17,11 +17,17 @@ import { getMaterialChunks } from '@/lib/supabase/db'
 import type { ProcessedChunk } from '@/types/chunk'
 import type { CourseMaterial } from '@/types/course'
 
-interface ChunkViewerModalProps {
+export interface ChunkViewerModalProps {
   isOpen: boolean
   onClose: () => void
   material: CourseMaterial | null
   courseId: string
+  initialChunkId?: string
+  initialPageNumber?: number
+  initialSlideNumber?: number
+  initialVideoTimestamp?: string
+  highlightText?: string
+  fallbackChunks?: ProcessedChunk[]
 }
 
 export const ChunkViewerModal: React.FC<ChunkViewerModalProps> = ({
@@ -29,6 +35,12 @@ export const ChunkViewerModal: React.FC<ChunkViewerModalProps> = ({
   onClose,
   material,
   courseId,
+  initialChunkId,
+  initialPageNumber,
+  initialSlideNumber,
+  initialVideoTimestamp,
+  highlightText,
+  fallbackChunks,
 }) => {
   const [chunks, setChunks] = useState<ProcessedChunk[]>([])
   const [loading, setLoading] = useState(false)
@@ -50,10 +62,52 @@ export const ChunkViewerModal: React.FC<ChunkViewerModalProps> = ({
       setLoading(true)
       setError(null)
       try {
-        const data = await getMaterialChunks(courseId, material.materialId)
+        let data: ProcessedChunk[] = []
+        if (material.materialId && material.materialId !== 'temp_mat') {
+          data = await getMaterialChunks(courseId, material.materialId)
+        }
+        
+        // If remote returns 0 chunks, fallback to provided in-memory chunks
+        if ((!data || data.length === 0) && fallbackChunks && fallbackChunks.length > 0) {
+          data = fallbackChunks.filter(
+            (c) =>
+              (material.materialId && c.materialId === material.materialId) ||
+              (material.name && c.sourceName.toLowerCase() === material.name.toLowerCase()) ||
+              (material.name && material.name.toLowerCase().includes(c.sourceName.toLowerCase())) ||
+              (material.name && c.sourceName.toLowerCase().includes(material.name.toLowerCase()))
+          )
+          if (data.length === 0) {
+            data = fallbackChunks
+          }
+        }
+
         setChunks(data)
+
         if (data.length > 0) {
-          setSelectedChunk(data[0])
+          let target = data[0]
+          if (initialChunkId) {
+            const found = data.find((c) => c.chunkId === initialChunkId)
+            if (found) target = found
+          } else if (initialPageNumber !== undefined && initialPageNumber !== null) {
+            const found = data.find((c) => c.pageNumber === initialPageNumber)
+            if (found) target = found
+          } else if (initialSlideNumber !== undefined && initialSlideNumber !== null) {
+            const found = data.find((c) => c.slideNumber === initialSlideNumber)
+            if (found) target = found
+          } else if (initialVideoTimestamp) {
+            const found = data.find(
+              (c) =>
+                c.videoTimestamp === initialVideoTimestamp ||
+                c.startTimestamp === initialVideoTimestamp ||
+                (c.videoTimestamp && c.videoTimestamp.includes(initialVideoTimestamp))
+            )
+            if (found) target = found
+          } else if (highlightText) {
+            const q = highlightText.slice(0, 35).toLowerCase()
+            const found = data.find((c) => (c.text || (c as any).content || '').toLowerCase().includes(q))
+            if (found) target = found
+          }
+          setSelectedChunk(target)
         }
       } catch (err: any) {
         setError(err?.message || 'Failed to load chunks.')
@@ -63,7 +117,17 @@ export const ChunkViewerModal: React.FC<ChunkViewerModalProps> = ({
     }
 
     fetchChunks()
-  }, [isOpen, material, courseId])
+  }, [
+    isOpen,
+    material,
+    courseId,
+    initialChunkId,
+    initialPageNumber,
+    initialSlideNumber,
+    initialVideoTimestamp,
+    highlightText,
+    fallbackChunks,
+  ])
 
   if (!isOpen || !material) return null
 
@@ -218,19 +282,32 @@ export const ChunkViewerModal: React.FC<ChunkViewerModalProps> = ({
                         <Badge variant="emerald" size="sm">
                           Chunk #{selectedChunk.chunkIndex}
                         </Badge>
-                        {selectedChunk.pageNumber !== undefined && (
+                        {selectedChunk.pageNumber !== undefined && selectedChunk.pageNumber !== null && (
                           <Badge variant="rose" size="sm">
                             Page {selectedChunk.pageNumber}
                           </Badge>
                         )}
-                        {selectedChunk.slideNumber !== undefined && (
+                        {selectedChunk.slideNumber !== undefined && selectedChunk.slideNumber !== null && (
                           <Badge variant="amber" size="sm">
                             Slide {selectedChunk.slideNumber}
+                          </Badge>
+                        )}
+                        {(selectedChunk.videoTimestamp || selectedChunk.startTimestamp) && (
+                          <Badge variant="indigo" size="sm">
+                            Timestamp {selectedChunk.videoTimestamp || `${selectedChunk.startTimestamp} - ${selectedChunk.endTimestamp || ''}`}
                           </Badge>
                         )}
                         <Badge variant="outline" size="sm">
                           {selectedChunk.sourceType}
                         </Badge>
+                        {(selectedChunk.chunkId === initialChunkId ||
+                          (initialPageNumber !== undefined && selectedChunk.pageNumber === initialPageNumber) ||
+                          (initialSlideNumber !== undefined && selectedChunk.slideNumber === initialSlideNumber) ||
+                          (initialVideoTimestamp && (selectedChunk.videoTimestamp === initialVideoTimestamp || selectedChunk.startTimestamp === initialVideoTimestamp))) && (
+                          <Badge variant="emerald" size="sm" className="bg-emerald-500/20 border-emerald-500/40 text-emerald-300 font-extrabold animate-pulse">
+                            Cited Source Location
+                          </Badge>
+                        )}
                       </div>
 
                       <Button

@@ -625,12 +625,14 @@ export const getMaterialChunks = async (
     }
   }
 
-  const local = localStorage.getItem(`mentora_chunks_${courseId}_${materialId}`)
-  if (local) {
-    try {
-      return JSON.parse(local)
-    } catch {
-      // Ignore
+  if (typeof localStorage !== 'undefined') {
+    const local = localStorage.getItem(`mentora_chunks_${courseId}_${materialId}`)
+    if (local) {
+      try {
+        return JSON.parse(local)
+      } catch {
+        // Ignore
+      }
     }
   }
 
