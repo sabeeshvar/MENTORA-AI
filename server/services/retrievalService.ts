@@ -43,6 +43,9 @@ export interface RetrievedChunk {
   materialName?: string
   materialType?: string
   videoTimestamp?: string | null
+  startTimestamp?: string | null
+  endTimestamp?: string | null
+  diagramDescription?: string | null
   topicId?: string
   conceptId?: string
 }
@@ -150,6 +153,10 @@ export class CoursePartitionedVectorStore implements IVectorStoreBackend {
           chunkIndex: chunk.chunkIndex,
           similarityScore: Math.round(sim * 10000) / 10000,
           embeddingModel: chunk.embeddingModel,
+          videoTimestamp: chunk.videoTimestamp ?? (chunk as any).video_timestamp ?? null,
+          startTimestamp: (chunk as any).startTimestamp ?? null,
+          endTimestamp: (chunk as any).endTimestamp ?? null,
+          diagramDescription: (chunk as any).diagramDescription ?? null,
         })
       }
     }

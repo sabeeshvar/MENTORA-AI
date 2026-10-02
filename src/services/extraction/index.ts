@@ -86,10 +86,14 @@ export const defaultExtractionManager = new DocumentExtractionManager()
  * Helper to fetch ArrayBuffer from a URL or File
  */
 export const getFileBuffer = async (
-  fileOrUrl: File | Blob | string | ArrayBuffer
+  fileOrUrl: File | Blob | string | ArrayBuffer | Uint8Array
 ): Promise<ArrayBuffer> => {
   if (fileOrUrl instanceof ArrayBuffer) {
     return fileOrUrl
+  }
+
+  if (fileOrUrl instanceof Uint8Array || (typeof Buffer !== 'undefined' && Buffer.isBuffer(fileOrUrl))) {
+    return fileOrUrl.buffer.slice(fileOrUrl.byteOffset, fileOrUrl.byteOffset + fileOrUrl.byteLength) as ArrayBuffer
   }
 
   if (fileOrUrl instanceof Blob) {

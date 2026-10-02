@@ -114,12 +114,38 @@ export const extractPdfPages = async (
       let visualElements: string[] | undefined = undefined
       let figureType: string | undefined = undefined
 
-      if (!cleanPageText || cleanPageText.length < 40) {
+      const hasFigureMarkers = /(figure|fig\.|diagram|architecture|flowchart|pipeline|workflow|schematic|chart)\b/i.test(cleanPageText)
+      const isVisualPage = !cleanPageText || cleanPageText.length < 120 || hasFigureMarkers
+
+      if (isVisualPage) {
+        let imageBase64: string | undefined = undefined
+        if (typeof document !== 'undefined') {
+          try {
+            const viewport = page.getViewport({ scale: 1.0 })
+            const canvas = document.createElement('canvas')
+            canvas.width = Math.min(viewport.width, 1024)
+            canvas.height = Math.min(viewport.height, 1024)
+            const ctx = canvas.getContext('2d')
+            if (ctx) {
+              await page.render({ canvasContext: ctx, viewport }).promise
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.8)
+              imageBase64 = dataUrl.replace(/^data:image\/[a-z]+;base64,/, '')
+            }
+          } catch {
+            // If canvas rendering fails in non-standard environment, proceed with context
+          }
+        }
+
         try {
-          const res = await fetch('/api/ai/vision/describe', {
+          const endpoint = typeof window !== 'undefined'
+            ? '/api/ai/vision/describe'
+            : (process.env.API_BASE_URL || 'http://localhost:5000') + '/api/ai/vision/describe'
+          const res = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+              imageBase64,
+              mimeType: 'image/jpeg',
               pageOrSlideNumber: pageNum,
               title,
               documentContext: cleanPageText,
