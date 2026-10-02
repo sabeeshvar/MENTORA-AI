@@ -490,7 +490,7 @@ export const saveMaterialChunks = async (
         course_id: courseId,
         material_id: materialId,
         chunk_index: c.chunkIndex,
-        content: c.content,
+        content: c.content || c.text || '',
         page_number: c.pageNumber || null,
         slide_number: c.slideNumber || null,
         video_timestamp: c.videoTimestamp || null,
@@ -504,7 +504,10 @@ export const saveMaterialChunks = async (
           diagramDescription: c.diagramDescription,
         },
       }))
-      await supabase.from('course_chunks').insert(records)
+      const { error } = await supabase.from('course_chunks').insert(records)
+      if (error) {
+        console.warn('Supabase saveMaterialChunks failed:', error.message)
+      }
     } catch (err) {
       console.warn('Supabase saveMaterialChunks failed:', err)
     }
