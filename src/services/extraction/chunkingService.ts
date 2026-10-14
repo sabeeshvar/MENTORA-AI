@@ -46,6 +46,22 @@ export const createChunksFromExtractedPages = (
     const slideNum = page.slideNumber ?? (sourceType === 'PPTX' ? page.pageNumber : undefined)
     const sectionTitle = page.title?.trim() || (pageNum ? `Page ${pageNum}` : `Slide ${slideNum || page.pageNumber}`)
 
+    // Generate normalized topic and concept tags for requirement 1b & 1c
+    const rawTopic =
+      page.title &&
+      page.title.trim().length > 2 &&
+      !page.title.startsWith('Slide ') &&
+      !page.title.startsWith('Page ')
+        ? page.title.trim()
+        : sourceType === 'PPTX'
+        ? `Slide ${slideNum}`
+        : `Page ${pageNum || 1}`
+    const topicId =
+      page.topicId ||
+      rawTopic.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/^_+|_+$/g, '') ||
+      'general_topic'
+    const conceptId = page.conceptId || `conc_${topicId}_${globalChunkIndex}`
+
     // If page content is within normal chunk limit, keep as single chunk
     if (cleanedText.length <= maxChunkSize) {
       const chunkId = `chk_${materialId}_${globalChunkIndex}_${Date.now().toString(36)}`
@@ -66,6 +82,8 @@ export const createChunksFromExtractedPages = (
         diagramDescription: page.diagramDescription,
         sectionTitle,
         chunkIndex: globalChunkIndex,
+        topicId,
+        conceptId,
         createdAt: now,
         charCount: cleanedText.length,
         wordCount,
@@ -100,6 +118,8 @@ export const createChunksFromExtractedPages = (
             diagramDescription: page.diagramDescription,
             sectionTitle,
             chunkIndex: globalChunkIndex,
+            topicId,
+            conceptId,
             createdAt: now,
             charCount: trimmed.length,
             wordCount: trimmed.split(/\s+/).filter(Boolean).length,
@@ -130,6 +150,8 @@ export const createChunksFromExtractedPages = (
                 diagramDescription: page.diagramDescription,
                 sectionTitle,
                 chunkIndex: globalChunkIndex,
+                topicId,
+                conceptId,
                 createdAt: now,
                 charCount: slice.length,
                 wordCount: slice.split(/\s+/).filter(Boolean).length,
@@ -158,8 +180,14 @@ export const createChunksFromExtractedPages = (
         sourceName,
         pageNumber: pageNum,
         slideNumber: slideNum,
+        videoTimestamp: page.videoTimestamp,
+        startTimestamp: page.startTimestamp,
+        endTimestamp: page.endTimestamp,
+        diagramDescription: page.diagramDescription,
         sectionTitle,
         chunkIndex: globalChunkIndex,
+        topicId,
+        conceptId,
         createdAt: now,
         charCount: trimmed.length,
         wordCount: trimmed.split(/\s+/).filter(Boolean).length,

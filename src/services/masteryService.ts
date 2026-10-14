@@ -101,6 +101,23 @@ export class MasteryService {
       latestTrend = trend
     }
 
+    // Extract diagnosed misconceptions and weak areas from wrong answer evaluations
+    const misconceptions: string[] = existing?.misconceptions ? [...existing.misconceptions] : []
+    const weakAreas: string[] = existing?.weakAreas ? [...existing.weakAreas] : []
+
+    for (const res of results) {
+      if (!res.isCorrect) {
+        if (res.wrongAnswerAnalysis?.whyIncorrect) {
+          const disc = res.wrongAnswerAnalysis.whyIncorrect.trim()
+          if (!misconceptions.includes(disc)) misconceptions.push(disc)
+        }
+        if (res.wrongAnswerAnalysis?.correctConcept) {
+          const conc = `Needs reinforcement on ${res.wrongAnswerAnalysis.correctConcept}`
+          if (!weakAreas.includes(conc)) weakAreas.push(conc)
+        }
+      }
+    }
+
     const updatedTopicMastery: TopicMastery = {
       topicId,
       courseId,
@@ -113,6 +130,8 @@ export class MasteryService {
       lastAttemptAt: new Date().toISOString(),
       difficultyLevel: difficulty === 'adaptive' ? 'medium' : difficulty,
       trend: latestTrend,
+      weakAreas: weakAreas.slice(-5),
+      misconceptions: misconceptions.slice(-5),
       updatedAt: new Date().toISOString(),
     }
 

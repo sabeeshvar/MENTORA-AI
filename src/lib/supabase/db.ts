@@ -985,3 +985,159 @@ export const getUserRecommendations = async (
   }
   return []
 }
+
+// ==========================================
+// 8. Course Topics & Prerequisites (Req 1b, 1c)
+// ==========================================
+
+export interface CourseTopicRecord {
+  id: string
+  courseId: string
+  canonicalName: string
+  translations?: Record<string, string>
+  prerequisites: string[]
+  difficulty?: string
+  importanceWeight?: number
+  createdAt?: string
+}
+
+export const saveCourseTopics = async (
+  courseId: string,
+  topics: CourseTopicRecord[]
+): Promise<void> => {
+  if (!topics || topics.length === 0) return
+
+  // Cache in local storage
+  const localKey = `mentora_course_topics_${courseId}`
+  localStorage.setItem(localKey, JSON.stringify(topics))
+
+  if (isSupabaseConfigured() && isValidUUID(courseId)) {
+    try {
+      const records = topics.map((t) => ({
+        id: t.id,
+        course_id: courseId,
+        canonical_name: t.canonicalName,
+        translations: t.translations || {},
+        prerequisites: t.prerequisites || [],
+        difficulty: t.difficulty || 'medium',
+        importance_weight: t.importanceWeight ?? 1.0,
+      }))
+      await supabase.from('course_topics').upsert(records, { onConflict: 'course_id,id' })
+    } catch (err) {
+      console.warn('Supabase saveCourseTopics failed, kept in local fallback:', err)
+    }
+  }
+}
+
+export const getCourseTopics = async (courseId: string): Promise<CourseTopicRecord[]> => {
+  if (isSupabaseConfigured() && isValidUUID(courseId)) {
+    try {
+      const { data, error } = await supabase
+        .from('course_topics')
+        .select('*')
+        .eq('course_id', courseId)
+        .order('importance_weight', { ascending: false })
+
+      if (!error && data && data.length > 0) {
+        return data.map((d) => ({
+          id: d.id,
+          courseId: d.course_id,
+          canonicalName: d.canonical_name,
+          translations: d.translations || {},
+          prerequisites: d.prerequisites || [],
+          difficulty: d.difficulty,
+          importanceWeight: d.importance_weight,
+          createdAt: d.created_at,
+        }))
+      }
+    } catch (err) {
+      console.warn('Supabase getCourseTopics query failed:', err)
+    }
+  }
+
+  const localKey = `mentora_course_topics_${courseId}`
+  const local = localStorage.getItem(localKey)
+  if (local) {
+    try {
+      return JSON.parse(local)
+    } catch {
+      // Ignore
+    }
+  }
+  return []
+}
+
+// ==========================================
+// 9. Evaluation Results (Req 5a, 5b, 5c)
+// ==========================================
+
+export interface EvaluationResultRecord {
+  id?: string
+  runId: string
+  metricName: string
+  score: number
+  details?: Record<string, any>
+  createdAt?: string
+}
+
+export const saveEvaluationResults = async (
+  results: EvaluationResultRecord[]
+): Promise<void> => {
+  if (!results || results.length === 0) return
+
+  const localKey = 'mentora_evaluation_benchmarks'
+  const existingStr = localStorage.getItem(localKey)
+  const existing: EvaluationResultRecord[] = existingStr ? JSON.parse(existingStr) : []
+  localStorage.setItem(localKey, JSON.stringify([...results, ...existing].slice(0, 50)))
+
+  if (isSupabaseConfigured()) {
+    try {
+      const records = results.map((r) => ({
+        run_id: r.runId,
+        metric_name: r.metricName,
+        score: r.score,
+        details: r.details || {},
+      }))
+      await supabase.from('evaluation_results').insert(records)
+    } catch (err) {
+      console.warn('Supabase saveEvaluationResults failed, kept in local cache:', err)
+    }
+  }
+}
+
+export const getEvaluationResults = async (): Promise<EvaluationResultRecord[]> => {
+  if (isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase
+        .from('evaluation_results')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(20)
+
+      if (!error && data && data.length > 0) {
+        return data.map((d) => ({
+          id: d.id,
+          runId: d.run_id,
+          metricName: d.metric_name,
+          score: d.score,
+          details: d.details || {},
+          createdAt: d.created_at,
+        }))
+      }
+    } catch (err) {
+      console.warn('Supabase getEvaluationResults failed:', err)
+    }
+  }
+
+  const localKey = 'mentora_evaluation_benchmarks'
+  const local = localStorage.getItem(localKey)
+  if (local) {
+    try {
+      return JSON.parse(local)
+    } catch {
+      // Ignore
+    }
+  }
+  return []
+}
+

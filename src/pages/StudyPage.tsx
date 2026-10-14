@@ -16,6 +16,10 @@ import {
   Info,
   ExternalLink,
   TrendingUp,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { Card } from '@/components/common/Card'
@@ -70,6 +74,84 @@ export const StudyPage: React.FC = () => {
   const [thinkingStage, setThinkingStage] = useState('Consulting course materials...')
   const [errorBanner, setErrorBanner] = useState<string | null>(null)
   const [masteryBanner, setMasteryBanner] = useState<string | null>(null)
+
+  // Voice Input & Audio-Based Tutoring State (Req 6e)
+  const [isListening, setIsListening] = useState(false)
+  const [playingMessageId, setPlayingMessageId] = useState<string | null>(null)
+  const speechRecognitionRef = useRef<any>(null)
+
+  const toggleVoiceInput = () => {
+    if (isListening) {
+      if (speechRecognitionRef.current) {
+        speechRecognitionRef.current.stop()
+      }
+      setIsListening(false)
+      return
+    }
+
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      setErrorBanner('Speech recognition is not supported in this browser. Please use Chrome or Edge.')
+      return
+    }
+
+    try {
+      const recognition = new SpeechRecognition()
+      recognition.continuous = false
+      recognition.interimResults = true
+      recognition.lang = language === 'hi' ? 'hi-IN' : language === 'ta' ? 'ta-IN' : 'en-US'
+
+      recognition.onstart = () => {
+        setIsListening(true)
+      }
+
+      recognition.onresult = (event: any) => {
+        let transcript = ''
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript
+        }
+        setInputQuestion(transcript)
+      }
+
+      recognition.onerror = (event: any) => {
+        console.warn('Speech recognition error:', event.error)
+        setIsListening(false)
+      }
+
+      recognition.onend = () => {
+        setIsListening(false)
+      }
+
+      speechRecognitionRef.current = recognition
+      recognition.start()
+    } catch (err) {
+      console.warn('Failed to start speech recognition:', err)
+      setIsListening(false)
+    }
+  }
+
+  const toggleSpeakMessage = (messageId: string, text: string) => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return
+
+    if (playingMessageId === messageId) {
+      window.speechSynthesis.cancel()
+      setPlayingMessageId(null)
+      return
+    }
+
+    window.speechSynthesis.cancel()
+    const cleanText = text.replace(/\[Visual Figure.*?\]/g, '').replace(/https?:\/\/\S+/g, '')
+    const utterance = new SpeechSynthesisUtterance(cleanText)
+    utterance.lang = language === 'hi' ? 'hi-IN' : language === 'ta' ? 'ta-IN' : 'en-US'
+    utterance.rate = 1.0
+
+    utterance.onend = () => setPlayingMessageId(null)
+    utterance.onerror = () => setPlayingMessageId(null)
+
+    setPlayingMessageId(messageId)
+    window.speechSynthesis.speak(utterance)
+  }
 
   // Chunk Viewer Modal State for Click-to-Open Citations
   const [viewerModalState, setViewerModalState] = useState<{
@@ -250,8 +332,11 @@ export const StudyPage: React.FC = () => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+              studentStatement: query,
               message: query,
               courseId: selectedCourseId,
+              courseTitle: selectedCourse?.title,
+              chunks: courseChunks.slice(0, 4),
               contextChunks: courseChunks.slice(0, 4).map((c) => ({
                 content: c.text,
                 metadata: {
@@ -266,17 +351,20 @@ export const StudyPage: React.FC = () => {
           })
             .then((res) => res.json())
             .then(async (data) => {
-              if (data.isExplanatory && data.confidence >= 0.7 && data.topic) {
+              const detectedTopic = data.topicName || data.topic
+              if (data.isExplanatory && data.confidence >= 0.7 && detectedTopic) {
+                const isAccurate = data.isCorrect ?? (data.conceptualAccuracy >= 0.6)
+                const accuracyScore = isAccurate ? 0.85 : 0.3
                 const updated = await MasteryService.processConversationalMastery(
                   user.uid,
                   selectedCourseId,
-                  data.topic,
-                  data.conceptualAccuracy ?? 0.8,
+                  detectedTopic,
+                  accuracyScore,
                   data.confidence
                 )
                 if (updated) {
                   setMasteryBanner(
-                    `Topic Mastery calibrated from explanation: ${data.topic} (${Math.round(updated.masteryScore * 100)}%)`
+                    `Topic Mastery calibrated from conversation: ${detectedTopic} (${Math.round(updated.masteryScore * 100)}%)`
                   )
                   setTimeout(() => setMasteryBanner(null), 6000)
                 }
@@ -548,11 +636,36 @@ export const StudyPage: React.FC = () => {
                         )}
                       </div>
 
-                      {msg.retrievedCount !== undefined && msg.retrievedCount > 0 && (
-                        <span className="text-[10px] text-slate-500">
-                          {msg.retrievedCount} chunks evaluated
-                        </span>
-                      )}
+                      {/* Right: Chunk count & Audio Listen Button */}
+                      <div className="flex items-center gap-2">
+                        {msg.retrievedCount !== undefined && msg.retrievedCount > 0 && (
+                          <span className="text-[10px] text-slate-500">
+                            {msg.retrievedCount} chunks evaluated
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => toggleSpeakMessage(msg.id, msg.text)}
+                          className={`p-1 rounded-lg border transition-all flex items-center gap-1 text-[10px] font-semibold ${
+                            playingMessageId === msg.id
+                              ? 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300 shadow-sm shadow-emerald-500/20'
+                              : 'bg-slate-900/80 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
+                          }`}
+                          title={playingMessageId === msg.id ? 'Stop listening' : 'Listen to tutor explanation (Text-to-Speech)'}
+                        >
+                          {playingMessageId === msg.id ? (
+                            <>
+                              <VolumeX className="w-3 h-3 text-emerald-400 animate-pulse" />
+                              <span className="text-emerald-300">Stop</span>
+                            </>
+                          ) : (
+                            <>
+                              <Volume2 className="w-3 h-3 text-slate-400" />
+                              <span>Listen</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   )}
 
@@ -676,6 +789,27 @@ export const StudyPage: React.FC = () => {
               }
               className="flex-1 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs sm:text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 disabled:opacity-50"
             />
+            {/* Voice Input Button (Req 6e) */}
+            <Button
+              type="button"
+              variant={isListening ? 'danger' : 'outline'}
+              size="md"
+              onClick={toggleVoiceInput}
+              disabled={isThinking || courseChunks.length === 0}
+              className={`rounded-xl px-3 transition-all ${
+                isListening
+                  ? 'animate-pulse bg-rose-600 text-white border-rose-400 shadow-lg shadow-rose-900/40'
+                  : 'border-slate-800 bg-slate-900 text-slate-300 hover:text-white hover:border-slate-700'
+              }`}
+              title={isListening ? 'Listening... click to stop' : 'Voice Input — Speak to AI Tutor (Speech-to-Text)'}
+            >
+              {isListening ? (
+                <MicOff className="w-4 h-4 text-white" />
+              ) : (
+                <Mic className="w-4 h-4 text-emerald-400" />
+              )}
+            </Button>
+
             <Button
               type="submit"
               variant="primary"

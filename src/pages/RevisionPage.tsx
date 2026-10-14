@@ -9,6 +9,14 @@ import {
   Loader2,
   X,
   Send,
+  BookOpen,
+  Layers,
+  Presentation,
+  Volume2,
+  VolumeX,
+  ChevronLeft,
+  ChevronRight,
+  RefreshCw,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { useTranslation } from '@/context/LanguageContext'
@@ -41,6 +49,22 @@ export const RevisionPage: React.FC = () => {
   const [sessionRecap, setSessionRecap] = useState<RevisionRecap | null>(null)
   const [sessionLoading, setSessionLoading] = useState(false)
   const [sessionStep, setSessionStep] = useState<'recap' | 'quiz' | 'summary'>('recap')
+
+  // Revision Material Formats (Req 6b: flashcards, slides, audio briefs)
+  const [revisionFormat, setRevisionFormat] = useState<'overview' | 'flashcards' | 'slides' | 'audio'>('overview')
+  const [cardIndex, setCardIndex] = useState(0)
+  const [isCardFlipped, setIsCardFlipped] = useState(false)
+  const [slideIndex, setSlideIndex] = useState(0)
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false)
+
+  // Stop speech synthesis when closing or unmounting
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel()
+      }
+    }
+  }, [])
 
   // Quiz Taking State inside Revision Modal
   const [currentQIndex, setCurrentQIndex] = useState(0)
@@ -116,6 +140,15 @@ export const RevisionPage: React.FC = () => {
     setQuizResults([])
     setNewMasteryScore(null)
 
+    setRevisionFormat('overview')
+    setCardIndex(0)
+    setIsCardFlipped(false)
+    setSlideIndex(0)
+    setIsPlayingAudio(false)
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+    }
+
     try {
       const recap = await RevisionService.getRevisionSession({
         courseId: selectedCourseId,
@@ -126,6 +159,32 @@ export const RevisionPage: React.FC = () => {
       setSessionRecap(recap)
     } finally {
       setSessionLoading(false)
+    }
+  }
+
+  const handleCloseModal = () => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+    }
+    setIsPlayingAudio(false)
+    setActiveTopic(null)
+  }
+
+  const handleToggleAudioBrief = (text: string) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
+
+    if (isPlayingAudio) {
+      window.speechSynthesis.cancel()
+      setIsPlayingAudio(false)
+    } else {
+      window.speechSynthesis.cancel()
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.rate = 0.95
+      utterance.pitch = 1.0
+      utterance.onend = () => setIsPlayingAudio(false)
+      utterance.onerror = () => setIsPlayingAudio(false)
+      window.speechSynthesis.speak(utterance)
+      setIsPlayingAudio(true)
     }
   }
 
@@ -366,7 +425,7 @@ export const RevisionPage: React.FC = () => {
                 </div>
               </div>
               <button
-                onClick={() => setActiveTopic(null)}
+                onClick={handleCloseModal}
                 className="p-1.5 rounded-lg text-slate-400 hover:text-white"
               >
                 <X className="w-5 h-5" />
@@ -379,62 +438,379 @@ export const RevisionPage: React.FC = () => {
                 <p className="text-xs text-slate-400">Synthesizing grounded revision recap...</p>
               </div>
             ) : sessionStep === 'recap' && sessionRecap ? (
-              /* Step 1: Concept Recap & Key Points */
+              /* Step 1: Multi-Format Revision Materials (Req 6b: flashcards, slides, audio briefs) */
               <div className="space-y-5">
-                <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2">
-                  <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    {t('revision.recap')}
-                  </h4>
-                  <p className="text-xs sm:text-sm text-slate-200 leading-relaxed">
-                    {sessionRecap.summary}
-                  </p>
+                {/* Format Selector Bar */}
+                <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-950/80 rounded-xl border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setRevisionFormat('overview')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      revisionFormat === 'overview'
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <BookOpen className="w-3.5 h-3.5" />
+                    Overview & Traps
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRevisionFormat('flashcards')
+                      setIsCardFlipped(false)
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      revisionFormat === 'flashcards'
+                        ? 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    Flashcards
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRevisionFormat('slides')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      revisionFormat === 'slides'
+                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Presentation className="w-3.5 h-3.5" />
+                    Slide Deck
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRevisionFormat('audio')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      revisionFormat === 'audio'
+                        ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Volume2 className="w-3.5 h-3.5" />
+                    Audio Brief
+                  </button>
                 </div>
 
-                <div className="space-y-2">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                    {t('revision.keyPoints')}
-                  </h4>
-                  <ul className="space-y-1.5">
-                    {sessionRecap.keyPoints.map((pt, idx) => (
-                      <li
-                        key={idx}
-                        className="text-xs text-slate-300 flex items-start gap-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-800/80"
-                      >
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                        <span>{pt}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+                {/* 1. Format: Overview & Traps */}
+                {revisionFormat === 'overview' && (
+                  <div className="space-y-4 animate-fadeIn">
+                    <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2">
+                      <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5" />
+                        {t('revision.recap')}
+                      </h4>
+                      <p className="text-xs sm:text-sm text-slate-200 leading-relaxed">
+                        {sessionRecap.summary}
+                      </p>
+                    </div>
 
-                {/* Previous Mistakes & Misconceptions */}
-                {sessionRecap.previousMistakes.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-bold text-rose-400 uppercase tracking-wider">
-                      {t('revision.mistakes')}
-                    </h4>
-                    {sessionRecap.previousMistakes.map((m, idx) => (
-                      <div
-                        key={idx}
-                        className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs space-y-1.5"
-                      >
-                        <p className="font-semibold text-rose-300">Question: {m.question}</p>
-                        <p className="text-rose-200/80">
-                          <strong>Common Misconception:</strong> {m.misconception}
-                        </p>
-                        <p className="text-emerald-300 font-medium">
-                          <strong>Correction:</strong> {m.groundedCorrection}
-                        </p>
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                        {t('revision.keyPoints')}
+                      </h4>
+                      <ul className="space-y-1.5">
+                        {sessionRecap.keyPoints.map((pt, idx) => (
+                          <li
+                            key={idx}
+                            className="text-xs text-slate-300 flex items-start gap-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-800/80"
+                          >
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                            <span>{pt}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    {/* Previous Mistakes & Misconceptions */}
+                    {sessionRecap.previousMistakes.length > 0 && (
+                      <div className="space-y-2">
+                        <h4 className="text-xs font-bold text-rose-400 uppercase tracking-wider">
+                          {t('revision.mistakes')}
+                        </h4>
+                        {sessionRecap.previousMistakes.map((m, idx) => (
+                          <div
+                            key={idx}
+                            className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs space-y-1.5"
+                          >
+                            <p className="font-semibold text-rose-300">Question: {m.question}</p>
+                            <p className="text-rose-200/80">
+                              <strong>Common Misconception:</strong> {m.misconception}
+                            </p>
+                            <p className="text-emerald-300 font-medium">
+                              <strong>Correction:</strong> {m.groundedCorrection}
+                            </p>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    )}
                   </div>
                 )}
+
+                {/* 2. Format: Interactive Flashcards */}
+                {revisionFormat === 'flashcards' && (() => {
+                  const flashcards = [
+                    {
+                      category: 'Core Definition & Bounds',
+                      front: `What is the fundamental operating concept and definition of ${activeTopic.topicName}?`,
+                      back: sessionRecap.summary,
+                    },
+                    {
+                      category: 'Governing Principle',
+                      front: `What is the key principle or invariant behind ${activeTopic.topicName}?`,
+                      back: sessionRecap.keyPoints[0] || 'Refer to course material notes.',
+                    },
+                    {
+                      category: 'Common Misconception & Pitfall',
+                      front: `What common trap or mistake occurs when solving questions on ${activeTopic.topicName}?`,
+                      back: sessionRecap.previousMistakes[0]
+                        ? `Mistake: ${sessionRecap.previousMistakes[0].misconception}\n\nCorrection: ${sessionRecap.previousMistakes[0].groundedCorrection}`
+                        : (sessionRecap.keyPoints[1] || 'Avoid oversimplifying edge cases.'),
+                    },
+                  ]
+                  const currentCard = flashcards[cardIndex] || flashcards[0]
+
+                  return (
+                    <div className="space-y-4 animate-fadeIn">
+                      <div className="flex items-center justify-between text-xs text-slate-400">
+                        <span className="font-semibold text-teal-400">
+                          {currentCard.category}
+                        </span>
+                        <span>
+                          Card {cardIndex + 1} of {flashcards.length}
+                        </span>
+                      </div>
+
+                      {/* Flip Flashcard */}
+                      <div
+                        onClick={() => setIsCardFlipped(!isCardFlipped)}
+                        className={`min-h-[200px] p-6 rounded-2xl border cursor-pointer transition-all duration-300 flex flex-col justify-between select-none ${
+                          isCardFlipped
+                            ? 'bg-teal-950/40 border-teal-500/40 text-teal-100 shadow-lg shadow-teal-950/50'
+                            : 'bg-slate-950/70 border-slate-800 text-slate-200 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-slate-400">
+                          <span>{isCardFlipped ? 'Back (Answer & Concept)' : 'Front (Prompt)'}</span>
+                          <span className="text-teal-400 flex items-center gap-1 font-semibold">
+                            <RefreshCw className="w-3 h-3" /> Click to flip
+                          </span>
+                        </div>
+                        <div className="my-auto py-4 text-center">
+                          <p className={`text-sm sm:text-base font-medium leading-relaxed whitespace-pre-line ${
+                            isCardFlipped ? 'text-teal-200' : 'text-white'
+                          }`}>
+                            {isCardFlipped ? currentCard.back : currentCard.front}
+                          </p>
+                        </div>
+                        <div className="text-center text-[11px] text-slate-400">
+                          {isCardFlipped ? 'Tap to view question' : 'Tap to reveal verified solution'}
+                        </div>
+                      </div>
+
+                      {/* Flashcard Controls */}
+                      <div className="flex items-center justify-between pt-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={cardIndex === 0}
+                          onClick={() => {
+                            setCardIndex(cardIndex - 1)
+                            setIsCardFlipped(false)
+                          }}
+                          leftIcon={<ChevronLeft className="w-4 h-4" />}
+                        >
+                          Previous Card
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={cardIndex === flashcards.length - 1}
+                          onClick={() => {
+                            setCardIndex(cardIndex + 1)
+                            setIsCardFlipped(false)
+                          }}
+                          rightIcon={<ChevronRight className="w-4 h-4" />}
+                        >
+                          Next Card
+                        </Button>
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* 3. Format: Slide Deck Overview */}
+                {revisionFormat === 'slides' && (() => {
+                  const slides = [
+                    {
+                      slideNum: 1,
+                      title: `${activeTopic.topicName}: Core Overview`,
+                      subtitle: 'Foundational Theory & Purpose',
+                      body: sessionRecap.summary,
+                      bullet: sessionRecap.keyPoints[0] || 'Foundational concept definition',
+                    },
+                    {
+                      slideNum: 2,
+                      title: 'Mechanisms & Technical Invariants',
+                      subtitle: 'Formulations & Step-by-Step Logic',
+                      body: sessionRecap.keyPoints.slice(0, 3).join(' • '),
+                      bullet: sessionRecap.keyPoints[1] || 'Invariant validation',
+                    },
+                    {
+                      slideNum: 3,
+                      title: 'Misconception Avoidance & Exam Strategy',
+                      subtitle: 'Common Pitfalls & Diagnostic Checks',
+                      body: sessionRecap.previousMistakes[0]
+                        ? `Watch out for: ${sessionRecap.previousMistakes[0].misconception}`
+                        : 'Review boundary conditions and parameter convergence.',
+                      bullet: sessionRecap.previousMistakes[0]?.groundedCorrection || 'Always cross-check verified source formulations.',
+                    },
+                  ]
+                  const currentSlide = slides[slideIndex] || slides[0]
+
+                  return (
+                    <div className="space-y-4 animate-fadeIn">
+                      <div className="flex items-center justify-between text-xs text-slate-400">
+                        <span className="font-semibold text-cyan-400">
+                          Slide Deck: {activeTopic.topicName}
+                        </span>
+                        <span>
+                          Slide {slideIndex + 1} of {slides.length}
+                        </span>
+                      </div>
+
+                      {/* Slide Canvas */}
+                      <div className="p-6 rounded-2xl bg-gradient-to-br from-slate-950 to-slate-900 border border-cyan-500/20 shadow-xl space-y-4 min-h-[220px] flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-3">
+                            <span className="text-[11px] font-mono text-cyan-400 uppercase tracking-wider">
+                              Slide {currentSlide.slideNum}: {currentSlide.subtitle}
+                            </span>
+                            <Badge variant="indigo" size="sm">Course Slide</Badge>
+                          </div>
+                          <h4 className="text-base font-bold text-white mb-2">{currentSlide.title}</h4>
+                          <p className="text-xs text-slate-300 leading-relaxed mb-3">{currentSlide.body}</p>
+                          <div className="p-2.5 rounded-lg bg-cyan-950/40 border border-cyan-500/30 text-xs text-cyan-200 flex items-start gap-2">
+                            <CheckCircle2 className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+                            <span><strong>Key Takeaway:</strong> {currentSlide.bullet}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Slide Controls */}
+                      <div className="flex items-center justify-between pt-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={slideIndex === 0}
+                          onClick={() => setSlideIndex(slideIndex - 1)}
+                          leftIcon={<ChevronLeft className="w-4 h-4" />}
+                        >
+                          Previous Slide
+                        </Button>
+                        <div className="flex gap-1.5">
+                          {slides.map((_, i) => (
+                            <button
+                              key={i}
+                              onClick={() => setSlideIndex(i)}
+                              className={`w-2.5 h-2.5 rounded-full transition-all ${
+                                i === slideIndex ? 'bg-cyan-400 w-5' : 'bg-slate-700'
+                              }`}
+                            />
+                          ))}
+                        </div>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={slideIndex === slides.length - 1}
+                          onClick={() => setSlideIndex(slideIndex + 1)}
+                          rightIcon={<ChevronRight className="w-4 h-4" />}
+                        >
+                          Next Slide
+                        </Button>
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* 4. Format: Spoken Audio Brief */}
+                {revisionFormat === 'audio' && (() => {
+                  const audioScript = `Here is your high-yield audio brief on ${activeTopic.topicName}. ${sessionRecap.summary}. Key points to remember: ${sessionRecap.keyPoints.join('. ')}. ${
+                    sessionRecap.previousMistakes[0]
+                      ? `Important correction to avoid misconceptions: ${sessionRecap.previousMistakes[0].groundedCorrection}`
+                      : ''
+                  }`
+
+                  return (
+                    <div className="space-y-4 animate-fadeIn">
+                      <div className="p-5 rounded-2xl bg-gradient-to-br from-purple-950/40 via-slate-950 to-slate-900 border border-purple-500/30 space-y-4 shadow-xl">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center">
+                              <Volume2 className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                                Spoken Revision Audio Brief
+                              </h4>
+                              <p className="text-[11px] text-slate-400">
+                                60-second synthetic voice narration of critical concepts
+                              </p>
+                            </div>
+                          </div>
+                          {isPlayingAudio && (
+                            <span className="flex items-center gap-1.5 text-xs text-purple-400 font-mono animate-pulse">
+                              <span className="w-2 h-2 rounded-full bg-purple-400" />
+                              Playing Audio...
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Player Action */}
+                        <div className="flex items-center gap-3 pt-2">
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => handleToggleAudioBrief(audioScript)}
+                            className={`text-xs font-semibold ${
+                              isPlayingAudio
+                                ? 'bg-rose-500 hover:bg-rose-600 text-white'
+                                : 'bg-purple-600 hover:bg-purple-500 text-white'
+                            }`}
+                            leftIcon={isPlayingAudio ? <VolumeX className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                          >
+                            {isPlayingAudio ? 'Stop Narration' : 'Play Audio Brief'}
+                          </Button>
+                          <span className="text-xs text-slate-400">
+                            Narrated via browser speech engine
+                          </span>
+                        </div>
+
+                        {/* Transcript Preview */}
+                        <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 text-xs text-slate-300 leading-relaxed max-h-36 overflow-y-auto">
+                          <p className="font-semibold text-purple-300 text-[11px] uppercase tracking-wider mb-1">
+                            Spoken Audio Script:
+                          </p>
+                          <p>{audioScript}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })()}
 
                 <div className="pt-4 border-t border-slate-800 flex justify-end">
                   <Button
                     variant="primary"
-                    onClick={() => setSessionStep('quiz')}
+                    onClick={() => {
+                      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+                        window.speechSynthesis.cancel()
+                      }
+                      setIsPlayingAudio(false)
+                      setSessionStep('quiz')
+                    }}
                     className="text-xs bg-gradient-to-r from-amber-500 to-teal-500 font-semibold"
                     rightIcon={<ArrowRight className="w-4 h-4" />}
                   >

@@ -12,6 +12,8 @@ import {
   RotateCcw,
   Loader2,
   TrendingUp,
+  Target,
+  HelpCircle,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { Card } from '@/components/common/Card'
@@ -837,6 +839,147 @@ export const QuizzesPage: React.FC = () => {
               </div>
             </div>
           )}
+
+          {/* Post-Assessment Performance Report (Req 3c) */}
+          <div className="pt-6 border-t border-slate-800/80 text-left space-y-6 max-w-2xl mx-auto">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Target className="w-4 h-4 text-emerald-400" />
+                Post-Assessment Diagnostic Report
+              </h3>
+              <Badge variant={isPassing ? 'emerald' : 'amber'} size="sm">
+                {isPassing ? 'Proficient' : 'Needs Reinforcement'}
+              </Badge>
+            </div>
+
+            {/* 1. Weak Topics Identification */}
+            <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                Diagnosed Topic Proficiency
+              </span>
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-slate-200">{savedAttempt.topic}</span>
+                <span className={`font-mono font-bold ${isPassing ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {savedAttempt.accuracyPercentage}% Accuracy
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                {isPassing
+                  ? 'Strong performance! You demonstrated good grasp of the source material.'
+                  : `This topic is currently flagged as a weak area. Targeted spaced revision will help solidify your conceptual understanding.`}
+              </p>
+            </div>
+
+            {/* 2. Likely Misconceptions Identified */}
+            {savedAttempt.results.some((r) => !r.isCorrect) && (
+              <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 space-y-3">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-rose-300 flex items-center gap-1.5">
+                  <HelpCircle className="w-3.5 h-3.5 text-rose-400" />
+                  Identified Misconceptions & Reasoning Traps
+                </span>
+                <div className="space-y-2.5">
+                  {savedAttempt.results
+                    .filter((r) => !r.isCorrect)
+                    .map((r, i) => (
+                      <div key={i} className="p-3 rounded-xl bg-slate-900/80 border border-rose-500/20 text-xs space-y-1">
+                        <p className="text-slate-300 font-medium">
+                          <strong>Trap:</strong> {r.wrongAnswerAnalysis?.whyIncorrect || 'Conceptual misalignment with course definitions.'}
+                        </p>
+                        <p className="text-emerald-300">
+                          <strong>Grounded Rule:</strong> {r.wrongAnswerAnalysis?.simpleExplanation || r.explanation}
+                        </p>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            {/* 3. Question-by-Question Review with Grounded Cited Feedback */}
+            <div className="space-y-3">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
+                Detailed Question Review & Cited Excerpts ({savedAttempt.results.length})
+              </span>
+              <div className="space-y-3">
+                {savedAttempt.results.map((res, idx) => {
+                  const q =
+                    activeQuiz.questions.find((item) => item.questionId === res.questionId) ||
+                    activeQuiz.questions[idx]
+                  return (
+                    <div
+                      key={res.questionId || idx}
+                      className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 text-xs space-y-2.5"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="font-semibold text-slate-200">
+                          Q{idx + 1}. {q?.question || 'Question'}
+                        </span>
+                        {res.isCorrect ? (
+                          <Badge variant="emerald" size="sm" className="shrink-0 text-[10px]">
+                            Correct (+1.0)
+                          </Badge>
+                        ) : (
+                          <Badge variant="rose" size="sm" className="shrink-0 text-[10px]">
+                            Incorrect (0.0)
+                          </Badge>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] p-2.5 rounded-xl bg-slate-900/50 border border-slate-800/60">
+                        <div>
+                          <span className="text-slate-500 block">Your Answer:</span>
+                          <span
+                            className={
+                              res.isCorrect ? 'text-emerald-300 font-medium' : 'text-rose-300 font-medium'
+                            }
+                          >
+                            {res.studentAnswer || '(No answer)'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500 block">Verified Correct:</span>
+                          <span className="text-emerald-400 font-medium">{res.correctAnswer}</span>
+                        </div>
+                      </div>
+
+                      {/* Cited Source Location */}
+                      {res.source && (
+                        <div className="p-2.5 rounded-xl bg-slate-900/80 border border-emerald-500/20 space-y-1">
+                          <div className="flex items-center justify-between text-[10px]">
+                            <span className="font-bold text-emerald-400 uppercase flex items-center gap-1">
+                              <BookOpen className="w-3 h-3" />
+                              {res.source.materialName}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              {res.source.pageNumber !== null && res.source.pageNumber !== undefined && (
+                                <Badge variant="rose" size="sm" className="text-[9px]">
+                                  Page {res.source.pageNumber}
+                                </Badge>
+                              )}
+                              {res.source.slideNumber !== null && res.source.slideNumber !== undefined && (
+                                <Badge variant="amber" size="sm" className="text-[9px]">
+                                  Slide {res.source.slideNumber}
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                          {res.source.relevantText && (
+                            <p className="text-[10px] text-slate-300 italic pl-2 border-l border-emerald-500/50">
+                              &ldquo;{res.source.relevantText}&rdquo;
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      <p className="text-[11px] text-slate-400 leading-relaxed pl-1">
+                        <strong>Feedback:</strong> {res.feedback}
+                      </p>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
 
           {/* Action Buttons */}
           <div className="pt-4 flex flex-wrap items-center justify-center gap-3">

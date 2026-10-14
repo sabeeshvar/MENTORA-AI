@@ -204,7 +204,41 @@ export const processUploadedMaterial = async (
     reportProgress(`Saving ${chunks.length} structured chunks to Supabase...`, 92)
     await saveMaterialChunks(courseId, material.materialId, chunks)
 
-    // 5. Update processing status to 'processed'
+    // 5b. Persist identified topics and prerequisites to course_topics (Req 1b, 1c)
+    try {
+      const topicMap = new Map<string, { id: string; name: string }>()
+      let prevTopicId: string | undefined = undefined
+      const topicRecords: any[] = []
+
+      for (const ch of chunks) {
+        if (ch.topicId && !topicMap.has(ch.topicId)) {
+          const name =
+            ch.sectionTitle &&
+            !ch.sectionTitle.startsWith('Page ') &&
+            !ch.sectionTitle.startsWith('Slide ')
+              ? ch.sectionTitle
+              : ch.topicId.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
+          topicMap.set(ch.topicId, { id: ch.topicId, name })
+          topicRecords.push({
+            id: ch.topicId,
+            courseId,
+            canonicalName: name,
+            prerequisites: prevTopicId ? [prevTopicId] : [],
+            difficulty: 'medium',
+            importanceWeight: 1.0,
+          })
+          prevTopicId = ch.topicId
+        }
+      }
+      if (topicRecords.length > 0) {
+        const { saveCourseTopics } = await import('@/lib/supabase/db')
+        await saveCourseTopics(courseId, topicRecords)
+      }
+    } catch (tErr) {
+      console.warn('Topic extraction persistence notice:', tErr)
+    }
+
+    // 6. Update processing status to 'processed'
     reportProgress('Finalizing material processing...', 98)
     await updateMaterialProcessingStatus(courseId, material.materialId, 'processed', undefined, chunks.length)
 

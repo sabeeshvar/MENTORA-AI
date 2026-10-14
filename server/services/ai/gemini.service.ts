@@ -196,7 +196,8 @@ export class GeminiProvider {
 RULES:
 1. Answer ONLY using the supplied course material context items below.
 2. If the answer is NOT present or NOT supported by the supplied context, you MUST:
-   - State that the course material does not contain enough information.
+   - Explicitly decline to fabricate, stating that the course material does not cover this query.
+   - If the student explicitly asked for outside explanation, strictly separate outside general knowledge under an "[Outside Knowledge]" header while clearly noting it is not in their course materials.
    - Set "grounded" to false, "groundingStatus" to "NOT COVERED", "confidence" to 0.0, and "sources" to [].
 3. If the answer IS supported:
    - Set "grounded" to true, "groundingStatus" to "SOURCE-BACKED".
@@ -253,25 +254,43 @@ ${question}`
     } catch (err) {
       console.warn('Gemini query error, falling back:', err)
       const topChunk = retrievedChunks[0]
+      const isRelevant = topChunk && topChunk.similarityScore > 0.25
+
+      if (!isRelevant) {
+        return {
+          answer:
+            preferredLanguage === 'ta'
+              ? 'வழங்கப்பட்ட பாடப் பொருட்களில் இந்த கேள்விக்கு பதிலளிக்க போதுமான தகவல்கள் இல்லை. இந்த தலைப்பு பாடத்திட்டத்தில் உள்ளடக்கப்படவில்லை.'
+              : preferredLanguage === 'hi'
+              ? 'प्रदान की गई अध्ययन सामग्री में इस प्रश्न का उत्तर देने के लिए पर्याप्त जानकारी नहीं है। यह विषय पाठ्यक्रम में शामिल नहीं है।'
+              : 'The supplied course materials do not cover this query. No source-backed evidence was found in the course documents.',
+          sources: [],
+          confidence: 0.0,
+          grounded: false,
+          groundingStatus: 'NOT COVERED',
+          retrievedChunksCount: retrievedChunks.length,
+          retrievedChunks: [],
+          language: preferredLanguage,
+        }
+      }
+
       return {
-        answer: topChunk
-          ? `Grounded context from ${getChunkName(topChunk)}:\n\n${getChunkText(topChunk)}`
-          : 'Unable to process tutor query.',
-        sources: topChunk
-          ? [
-              {
-                materialName: getChunkName(topChunk),
-                pageNumber: topChunk.pageNumber,
-                slideNumber: topChunk.slideNumber,
-                videoTimestamp: topChunk.videoTimestamp,
-                relevantText: getChunkText(topChunk).substring(0, 160),
-                sourceType: getChunkType(topChunk) as any,
-              },
-            ]
-          : [],
-        confidence: topChunk ? topChunk.similarityScore : 0.0,
-        grounded: Boolean(topChunk),
-        groundingStatus: topChunk ? 'SOURCE-BACKED' : 'NOT COVERED',
+        answer: `According to ${getChunkName(topChunk)}${
+          topChunk.pageNumber ? ` (Page ${topChunk.pageNumber})` : ''
+        }${topChunk.slideNumber ? ` (Slide ${topChunk.slideNumber})` : ''}:\n\n${getChunkText(topChunk)}`,
+        sources: [
+          {
+            materialName: getChunkName(topChunk),
+            pageNumber: topChunk.pageNumber,
+            slideNumber: topChunk.slideNumber,
+            videoTimestamp: topChunk.videoTimestamp,
+            relevantText: getChunkText(topChunk).substring(0, 160),
+            sourceType: getChunkType(topChunk) as any,
+          },
+        ],
+        confidence: topChunk.similarityScore,
+        grounded: true,
+        groundingStatus: 'SOURCE-BACKED',
         retrievedChunksCount: retrievedChunks.length,
         retrievedChunks,
         language: preferredLanguage,

@@ -12,6 +12,8 @@ export interface ExtractedPage {
   diagramDescription?: string
   visualElements?: string[]
   figureType?: string
+  topicId?: string
+  conceptId?: string
 }
 
 export type ExtractionProgressCallback = (stage: string, percent: number) => void

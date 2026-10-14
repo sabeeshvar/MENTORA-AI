@@ -12,6 +12,8 @@ export interface TopicMastery {
   lastAttemptAt: string
   difficultyLevel: 'easy' | 'medium' | 'hard'
   trend: 'up' | 'down' | 'stable'
+  weakAreas?: string[]
+  misconceptions?: string[]
   updatedAt: string
 }
 
