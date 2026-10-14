@@ -1,9 +1,10 @@
-import React from 'react'
-import { Menu, Search, Bell, Sparkles, Flame } from 'lucide-react'
+import React, { useState } from 'react'
+import { Menu, Search, Bell, Sparkles, Flame, UploadCloud } from 'lucide-react'
 import { isSupabaseConfigured } from '@/lib/supabase/config'
 import { useAuth } from '@/context/AuthContext'
 import { Badge } from '@/components/common/Badge'
 import { LanguageSelector } from '@/components/common/LanguageSelector'
+import { UploadMaterialModal } from '@/components/materials/UploadMaterialModal'
 
 interface HeaderProps {
   onToggleMobileMenu: () => void
@@ -13,6 +14,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu }) => {
   const { user } = useAuth()
   const isSupaConnected = isSupabaseConfigured()
   const streakDays = user?.learningStats?.streakDays ?? 3
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
 
   return (
     <header className="h-16 bg-[#0D1322]/85 backdrop-blur-md border-b border-slate-800/80 px-4 md:px-8 flex items-center justify-between sticky top-0 z-30">
@@ -36,8 +38,18 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu }) => {
         </div>
       </div>
 
-      {/* Right: Language selector, streak, status badge, notifications, and AI status */}
-      <div className="flex items-center gap-2.5 sm:gap-3">
+      {/* Right: Upload action, Language selector, streak, status badge, notifications, and AI status */}
+      <div className="flex items-center gap-2 sm:gap-3">
+        {/* Universal Quick Upload Button */}
+        <button
+          onClick={() => setIsUploadModalOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-cyan-500/10 border border-emerald-500/30 text-emerald-300 hover:text-white hover:border-emerald-500/60 text-xs font-bold transition-all shadow-sm shadow-emerald-950/30 cursor-pointer"
+          title="Upload learning material (PDF, PPTX, MP4)"
+        >
+          <UploadCloud className="w-3.5 h-3.5 text-emerald-400" />
+          <span className="hidden sm:inline">Upload</span>
+        </button>
+
         {/* Multilingual Selector */}
         <LanguageSelector compact />
 
@@ -61,7 +73,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu }) => {
 
         <div className="hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-teal-500/10 border border-teal-500/20 text-teal-300 text-xs font-medium">
           <Sparkles className="w-3.5 h-3.5 text-teal-400" />
-          <span>Gemini 2.5 Flash Engine</span>
+          <span>Gemini 3.5 Flash Engine</span>
         </div>
 
         <button
@@ -72,6 +84,11 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu }) => {
           <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-emerald-400"></span>
         </button>
       </div>
+
+      <UploadMaterialModal
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+      />
     </header>
   )
 }

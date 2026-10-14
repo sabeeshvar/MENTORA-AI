@@ -28,6 +28,12 @@ export function computeQuestionHash(questionText: string, topic?: string): strin
   return Math.abs(hash).toString(16)
 }
 
+// Sanitize error messages to prevent any API key leakage
+export function sanitizeError(err: any): string {
+  const msg = typeof err === 'string' ? err : err?.message || String(err || 'Unknown error')
+  return msg.replace(/key=[A-Za-z0-9_\-\.]+/gi, 'key=[REDACTED]')
+}
+
 // ==========================================
 // Centralized Google Gemini AI Provider
 // ==========================================
@@ -35,10 +41,12 @@ export function computeQuestionHash(questionText: string, topic?: string): strin
 export class GeminiProvider {
   private client: GoogleGenAI | null = null
   private candidateModels = [
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite',
+    'gemini-3-flash-preview',
+    'gemini-flash-lite-latest',
+    'gemini-3.8-flash',
     'gemini-2.5-flash',
-    'gemini-2.5-flash-lite',
-    'gemini-3.1-pro-preview',
-    'gemini-flash-latest',
   ]
 
   constructor() {
@@ -46,7 +54,7 @@ export class GeminiProvider {
       try {
         this.client = new GoogleGenAI({ apiKey: serverConfig.geminiApiKey })
       } catch (err) {
-        console.warn('Failed to initialize GoogleGenAI client:', err)
+        console.warn('Failed to initialize GoogleGenAI client:', sanitizeError(err))
       }
     }
   }
@@ -1050,11 +1058,14 @@ Analyze this visual diagram and extract complete educational understanding.`
           err?.message?.includes('NOT_FOUND') ||
           err?.message?.includes('429') ||
           err?.status === 429 ||
-          err?.message?.includes('RESOURCE_EXHAUSTED')
+          err?.message?.includes('RESOURCE_EXHAUSTED') ||
+          err?.status === 503 ||
+          err?.message?.includes('503') ||
+          err?.message?.includes('UNAVAILABLE')
         ) {
           continue
         }
-        console.warn('Gemini vision description error, trying fallback:', err)
+        console.warn('Gemini vision description error, trying fallback:', sanitizeError(err))
         break
       }
     }
@@ -1169,11 +1180,14 @@ Return JSON:
           err?.message?.includes('NOT_FOUND') ||
           err?.message?.includes('429') ||
           err?.status === 429 ||
-          err?.message?.includes('RESOURCE_EXHAUSTED')
+          err?.message?.includes('RESOURCE_EXHAUSTED') ||
+          err?.status === 503 ||
+          err?.message?.includes('503') ||
+          err?.message?.includes('UNAVAILABLE')
         ) {
           continue
         }
-        console.warn('Gemini audio transcription error, using structured fallback:', err)
+        console.warn('Gemini audio transcription error, using structured fallback:', sanitizeError(err))
         break
       }
     }

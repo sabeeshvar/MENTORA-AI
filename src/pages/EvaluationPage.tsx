@@ -787,7 +787,7 @@ export const EvaluationPage: React.FC = () => {
                   </span>
                 </div>
                 <span className="font-mono font-bold text-xs text-white">
-                  gemini-2.5-flash
+                  gemini-3.5-flash-lite
                 </span>
               </div>
 

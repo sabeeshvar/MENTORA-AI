@@ -4,6 +4,7 @@ export interface TranslationDictionary {
   nav: {
     dashboard: string
     courses: string
+    materials?: string
     tutor: string
     quiz: string
     progress: string
@@ -82,6 +83,7 @@ export const translations: Record<SupportedLanguageCode, TranslationDictionary> 
     nav: {
       dashboard: 'Dashboard',
       courses: 'My Courses',
+      materials: 'Materials & Upload',
       tutor: 'AI Tutor',
       quiz: 'Adaptive Quiz',
       progress: 'Mastery & Progress',

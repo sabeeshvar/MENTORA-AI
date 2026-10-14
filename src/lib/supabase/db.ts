@@ -412,6 +412,69 @@ export const getCourseMaterials = async (
   }
 }
 
+export const getAllUserMaterials = async (
+  ownerId: string
+): Promise<(CourseMaterial & { courseTitle?: string })[]> => {
+  if (!ownerId) return []
+
+  const loadFromLocal = async (): Promise<(CourseMaterial & { courseTitle?: string })[]> => {
+    const courses = await getUserCourses(ownerId)
+    const allMaterials: (CourseMaterial & { courseTitle?: string })[] = []
+    for (const c of courses) {
+      const local = localStorage.getItem(`mentora_course_materials_${c.courseId}`)
+      if (local) {
+        try {
+          const parsed: CourseMaterial[] = JSON.parse(local)
+          for (const m of parsed) {
+            allMaterials.push({ ...m, courseTitle: c.title })
+          }
+        } catch {
+          // Ignore JSON parse error
+        }
+      }
+    }
+    return allMaterials.sort(
+      (a, b) => new Date(b.uploadedAt || 0).getTime() - new Date(a.uploadedAt || 0).getTime()
+    )
+  }
+
+  if (!isSupabaseConfigured()) {
+    return loadFromLocal()
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('course_materials')
+      .select('*, courses(id, title)')
+      .order('created_at', { ascending: false })
+
+    if (error || !data) {
+      return loadFromLocal()
+    }
+
+    return data.map((d: any) => ({
+      materialId: d.id,
+      courseId: d.course_id,
+      courseTitle: d.courses?.title || 'Course',
+      ownerId: d.owner_id,
+      name: d.name,
+      type: d.type as any,
+      storagePath: d.storage_path,
+      downloadURL: d.download_url,
+      size: Number(d.size_bytes),
+      processingStatus: d.processing_status,
+      errorMessage: d.error_message,
+      chunksCount: d.chunks_count,
+      uploadedAt: d.created_at || new Date().toISOString(),
+      createdAt: d.created_at,
+      updatedAt: d.updated_at,
+    }))
+  } catch (err) {
+    console.warn('Supabase getAllUserMaterials failed, using local fallback:', err)
+    return loadFromLocal()
+  }
+}
+
 export const deleteCourseMaterial = async (
   courseId: string,
   materialId: string,

@@ -12,12 +12,14 @@ import {
   Compass,
   CalendarDays,
   RotateCcw,
+  UploadCloud,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { useTranslation } from '@/context/LanguageContext'
 import { Card } from '@/components/common/Card'
 import { Button } from '@/components/common/Button'
 import { Badge } from '@/components/common/Badge'
+import { UploadMaterialModal } from '@/components/materials/UploadMaterialModal'
 import {
   getUserCourses,
   getUserTopicMasteries,
@@ -40,6 +42,7 @@ export const DashboardPage: React.FC = () => {
 
   // DEMO MODE Toggle for Hackathon Judges
   const [isDemoMode, setIsDemoMode] = useState(false)
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
 
   // Real Data States
   const [realCourses, setRealCourses] = useState<Course[]>([])
@@ -345,26 +348,74 @@ export const DashboardPage: React.FC = () => {
           </p>
         </div>
 
-        {/* Demo Mode Toggle for Judges */}
-        <div className="flex items-center gap-3 bg-slate-950/80 p-2.5 rounded-2xl border border-slate-800 self-start sm:self-auto">
-          <div className="text-right">
-            <span className="text-[10px] uppercase font-bold text-slate-400 block">Judge Demo</span>
-            <span className="text-xs font-bold text-emerald-400">
-              {isDemoMode ? 'Demo Mode [ON]' : 'Real Data [LIVE]'}
-            </span>
-          </div>
-          <button
-            onClick={() => setIsDemoMode(!isDemoMode)}
-            className={`w-12 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors ${
-              isDemoMode ? 'bg-emerald-500' : 'bg-slate-800'
-            }`}
+        {/* Action Controls: Upload & Demo Mode */}
+        <div className="flex flex-wrap items-center gap-3 self-start sm:self-auto">
+          <Button
+            size="md"
+            variant="primary"
+            onClick={() => setIsUploadModalOpen(true)}
+            className="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold shadow-lg shadow-emerald-500/20 text-xs sm:text-sm"
+            leftIcon={<UploadCloud className="w-4 h-4" />}
           >
-            <div
-              className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
-                isDemoMode ? 'translate-x-6' : 'translate-x-0'
+            + Upload Material
+          </Button>
+
+          {/* Demo Mode Toggle for Judges */}
+          <div className="flex items-center gap-3 bg-slate-950/80 p-2.5 rounded-2xl border border-slate-800">
+            <div className="text-right">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Judge Demo</span>
+              <span className="text-xs font-bold text-emerald-400">
+                {isDemoMode ? 'Demo Mode [ON]' : 'Real Data [LIVE]'}
+              </span>
+            </div>
+            <button
+              onClick={() => setIsDemoMode(!isDemoMode)}
+              className={`w-12 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors ${
+                isDemoMode ? 'bg-emerald-500' : 'bg-slate-800'
               }`}
-            />
-          </button>
+            >
+              <div
+                className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
+                  isDemoMode ? 'translate-x-6' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 1.2 Quick Document Ingestion Action Callout */}
+      <div className="p-4 rounded-3xl bg-slate-900/60 border border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+            <UploadCloud className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="text-xs sm:text-sm font-bold text-white">Upload New Learning Material</h3>
+            <p className="text-[11px] text-slate-400">
+              Upload PDF textbooks, lecture slides (PPTX), or class recordings (MP4) to extract source citations and ground your AI Tutor.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => setIsUploadModalOpen(true)}
+            className="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs"
+            leftIcon={<UploadCloud className="w-3.5 h-3.5" />}
+          >
+            Upload Material
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => navigate('/materials')}
+            className="text-xs border-slate-700"
+          >
+            View Materials Library
+          </Button>
         </div>
       </div>
 
@@ -729,6 +780,15 @@ export const DashboardPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <UploadMaterialModal
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+        onSuccess={() => {
+          if (!user) return
+          getUserCourses(user.uid).then(setRealCourses).catch(() => {})
+        }}
+      />
     </div>
   )
 }

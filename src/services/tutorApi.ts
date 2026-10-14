@@ -22,12 +22,12 @@ export const checkAIStatus = async (): Promise<{ configured: boolean; model: str
   try {
     const res = await fetch(`${API_BASE}/status`)
     if (!res.ok) {
-      return { configured: false, model: 'gemini-2.5-flash', provider: 'Google Gemini' }
+      return { configured: false, model: 'gemini-3.5-flash-lite', provider: 'Google Gemini' }
     }
     return await res.json()
   } catch (err) {
     console.warn('Could not contact AI status endpoint:', err)
-    return { configured: false, model: 'gemini-2.5-flash', provider: 'Google Gemini' }
+    return { configured: false, model: 'gemini-3.5-flash-lite', provider: 'Google Gemini' }
   }
 }
 

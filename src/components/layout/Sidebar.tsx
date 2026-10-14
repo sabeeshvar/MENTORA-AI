@@ -1,8 +1,9 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   BookOpen,
+  UploadCloud,
   Sparkles,
   Award,
   TrendingUp,
@@ -19,6 +20,7 @@ import {
 import { useAuth } from '@/context/AuthContext'
 import { useTranslation } from '@/context/LanguageContext'
 import { cn } from '@/lib/utils'
+import { UploadMaterialModal } from '@/components/materials/UploadMaterialModal'
 
 interface SidebarProps {
   onCloseMobile?: () => void
@@ -28,6 +30,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
   const { user, logout } = useAuth()
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
 
   const handleLogout = async () => {
     await logout()
@@ -37,6 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
   const navItems = [
     { label: t('nav.dashboard'), to: '/dashboard', icon: LayoutDashboard },
     { label: t('nav.courses'), to: '/courses', icon: BookOpen },
+    { label: t('nav.materials') || 'Materials', to: '/materials', icon: UploadCloud },
     { label: t('nav.tutor'), to: '/tutor', icon: Sparkles },
     { label: t('nav.quiz'), to: '/quiz', icon: Award },
     { label: t('nav.studyPlan'), to: '/study-plan', icon: CalendarDays },
@@ -66,6 +70,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
               Learn • Adapt • Master
             </p>
           </div>
+        </div>
+
+        {/* Quick Upload Button */}
+        <div className="px-4 pt-4 pb-1">
+          <button
+            type="button"
+            onClick={() => {
+              setIsUploadModalOpen(true)
+              onCloseMobile?.()
+            }}
+            className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-500/20 via-teal-500/15 to-cyan-500/10 border border-emerald-500/30 hover:border-emerald-500/60 text-emerald-300 hover:text-white flex items-center justify-center gap-2 text-xs font-bold transition-all shadow-sm shadow-emerald-950/40 group cursor-pointer"
+          >
+            <UploadCloud className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
+            <span>+ Upload Material</span>
+          </button>
         </div>
 
         {/* Navigation Links */}
@@ -129,6 +148,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
           </button>
         </div>
       </div>
+
+      <UploadMaterialModal
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+        onSuccess={(_mat, _courseId) => {
+          navigate('/materials')
+        }}
+      />
     </aside>
   )
 }
