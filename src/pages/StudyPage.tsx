@@ -37,6 +37,7 @@ import {
   checkAIStatus,
   type SourceCitation,
 } from '@/services/tutorApi'
+import { getApiEndpoint } from '@/services/apiConfig'
 import { useTranslation } from '@/context/LanguageContext'
 import type { Course, CourseMaterial } from '@/types/course'
 import type { ProcessedChunk } from '@/types/chunk'
@@ -328,7 +329,7 @@ export const StudyPage: React.FC = () => {
           query.trim().endsWith('?')
 
         if (!isPureQuestion) {
-          fetch('/api/ai/tutor/evaluate-understanding', {
+          fetch(getApiEndpoint('/api/ai/tutor/evaluate-understanding'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

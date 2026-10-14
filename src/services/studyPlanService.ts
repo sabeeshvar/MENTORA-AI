@@ -1,8 +1,7 @@
 import { saveStudyPlan } from '@/lib/supabase/db'
 import type { StudyPlan, StudyPlanDay, StudyPlanTask } from '@/types/studyPlan'
 import type { TopicMastery } from '@/types/mastery'
-
-const API_BASE = '/api/ai'
+import { getApiEndpoint } from './apiConfig'
 
 export class StudyPlanService {
   /**
@@ -32,7 +31,7 @@ export class StudyPlanService {
     let days: StudyPlanDay[] = []
 
     try {
-      const res = await fetch(`${API_BASE}/study-plan/generate`, {
+      const res = await fetch(getApiEndpoint('/api/ai/study-plan/generate'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

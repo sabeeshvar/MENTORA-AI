@@ -34,12 +34,42 @@ export function sanitizeError(err: any): string {
   return msg.replace(/key=[A-Za-z0-9_\-\.]+/gi, 'key=[REDACTED]')
 }
 
+// Clean and safely parse JSON even if surrounded by markdown code fences or conversational text
+export function cleanAndParseJson<T = any>(raw: string): T {
+  if (!raw || typeof raw !== 'string') {
+    throw new Error('Empty response received for JSON parsing')
+  }
+  let cleaned = raw.trim()
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+  }
+  const firstBrace = cleaned.indexOf('{')
+  const firstBracket = cleaned.indexOf('[')
+  let startIndex = 0
+  if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+    startIndex = firstBrace
+    const lastBrace = cleaned.lastIndexOf('}')
+    if (lastBrace !== -1 && lastBrace > startIndex) {
+      cleaned = cleaned.slice(startIndex, lastBrace + 1)
+    }
+  } else if (firstBracket !== -1) {
+    startIndex = firstBracket
+    const lastBracket = cleaned.lastIndexOf(']')
+    if (lastBracket !== -1 && lastBracket > startIndex) {
+      cleaned = cleaned.slice(startIndex, lastBracket + 1)
+    }
+  }
+
+  return JSON.parse(cleaned)
+}
+
 // ==========================================
 // Centralized Google Gemini AI Provider
 // ==========================================
 
 export class GeminiProvider {
   private client: GoogleGenAI | null = null
+  private lastApiKey: string = ''
   private candidateModels = [
     'gemini-3.5-flash-lite',
     'gemini-3.1-flash-lite',
@@ -50,17 +80,31 @@ export class GeminiProvider {
   ]
 
   constructor() {
-    if (serverConfig.isGeminiConfigured) {
+    this.getClient()
+  }
+
+  public getClient(): GoogleGenAI | null {
+    const key = serverConfig.geminiApiKey
+    if (!key || !serverConfig.isGeminiConfigured) {
+      this.client = null
+      this.lastApiKey = ''
+      return null
+    }
+    if (!this.client || this.lastApiKey !== key) {
       try {
-        this.client = new GoogleGenAI({ apiKey: serverConfig.geminiApiKey })
+        this.client = new GoogleGenAI({ apiKey: key })
+        this.lastApiKey = key
       } catch (err) {
         console.warn('Failed to initialize GoogleGenAI client:', sanitizeError(err))
+        this.client = null
+        this.lastApiKey = ''
       }
     }
+    return this.client
   }
 
   public isConfigured(): boolean {
-    return Boolean(this.client && serverConfig.isGeminiConfigured)
+    return Boolean(this.getClient() && serverConfig.isGeminiConfigured)
   }
 
   public computeQuestionHash(questionText: string, topic?: string): string {
@@ -71,14 +115,15 @@ export class GeminiProvider {
    * Helper to execute Gemini structured prompt or return deterministic grounded fallback
    */
   private async generateContent(prompt: string, systemInstruction?: string): Promise<string> {
-    if (!this.client || !serverConfig.isGeminiConfigured) {
+    const client = this.getClient()
+    if (!client || !serverConfig.isGeminiConfigured) {
       throw new Error('GEMINI_API_KEY is not configured on the server.')
     }
 
     let lastError: any = null
     for (const model of this.candidateModels) {
       try {
-        const response = await this.client.models.generateContent({
+        const response = await client.models.generateContent({
           model,
           contents: prompt,
           config: {
@@ -235,7 +280,7 @@ ${question}`
 
     try {
       const rawJson = await this.generateContent(userPrompt, systemInstruction)
-      const parsed = JSON.parse(rawJson)
+      const parsed = cleanAndParseJson(rawJson)
 
       const sources: SourceCitation[] = Array.isArray(parsed.sources)
         ? parsed.sources.map((s: any) => ({
@@ -423,7 +468,7 @@ ${priorQuestionTexts.slice(-10).map((pq) => `- ${pq}`).join('\n')}`
         `CONTEXT:\n${contextString}\n\nTOPIC: ${topic}\nDIFFICULTY: ${difficulty}`,
         systemInstruction
       )
-      const parsed = JSON.parse(rawJson)
+      const parsed = cleanAndParseJson(rawJson)
       const rawQuestions = Array.isArray(parsed.questions) ? parsed.questions : []
       if (rawQuestions.length === 0) {
         throw new Error('Gemini returned 0 questions')
@@ -908,7 +953,7 @@ ${priorQuestionTexts.slice(-10).map((pq) => `- ${pq}`).join('\n')}`
       }
     }
 
-    if (!this.client || !serverConfig.isGeminiConfigured) {
+    if (!this.getClient() || !serverConfig.isGeminiConfigured) {
       return {
         valid: true,
         reason: 'Verified: valid answer key, genuine source citation, non-empty options.',
@@ -948,7 +993,7 @@ Excerpt: ${question.source.relevantText}`
 
     try {
       const raw = await this.generateContent(prompt, systemInstruction)
-      const parsed = JSON.parse(raw)
+      const parsed = cleanAndParseJson(raw)
       return {
         valid: Boolean(parsed.valid),
         reason:
@@ -984,7 +1029,8 @@ Excerpt: ${question.source.relevantText}`
   }> {
     const { imageBase64, mimeType = 'image/png', pageOrSlideNumber, documentContext = '', title } = params
 
-    if (!this.client || !serverConfig.isGeminiConfigured) {
+    const client = this.getClient()
+    if (!client || !serverConfig.isGeminiConfigured) {
       return this.synthesizeDiagramFallback(title, pageOrSlideNumber, documentContext)
     }
 
@@ -1031,7 +1077,7 @@ Analyze this visual diagram and extract complete educational understanding.`
           contents = textPrompt
         }
 
-        const response = await this.client.models.generateContent({
+        const response = await client.models.generateContent({
           model,
           contents,
           config: {
@@ -1042,7 +1088,7 @@ Analyze this visual diagram and extract complete educational understanding.`
         })
 
         if (response.text) {
-          const parsed = JSON.parse(response.text)
+          const parsed = cleanAndParseJson(response.text)
           return {
             diagramDescription: parsed.diagramDescription || parsed.description || 'Visual educational diagram.',
             visualElements: Array.isArray(parsed.visualElements) ? parsed.visualElements : [],
@@ -1111,7 +1157,8 @@ Analyze this visual diagram and extract complete educational understanding.`
       dataBase64 = Buffer.from(mediaBuffer as any).toString('base64')
     }
 
-    if (!this.client || !serverConfig.isGeminiConfigured || !dataBase64 || dataBase64.length < 50) {
+    const client = this.getClient()
+    if (!client || !serverConfig.isGeminiConfigured || !dataBase64 || dataBase64.length < 50) {
       return this.synthesizeTranscriptFallback(fileName)
     }
 
@@ -1134,7 +1181,7 @@ Return JSON:
 
     for (const model of this.candidateModels) {
       try {
-        const response = await this.client.models.generateContent({
+        const response = await client.models.generateContent({
           model,
           contents: [
             {
@@ -1160,7 +1207,7 @@ Return JSON:
         })
 
         if (response.text) {
-          const parsed = JSON.parse(response.text)
+          const parsed = cleanAndParseJson(response.text)
           if (Array.isArray(parsed.segments) && parsed.segments.length > 0) {
             return {
               segments: parsed.segments.map((s: any, idx: number) => ({
@@ -1274,7 +1321,7 @@ Return JSON:
     const inferredTopic = topChunk?.sectionTitle || courseTitle || 'Core Concepts'
     const inferredTopicId = inferredTopic.toLowerCase().replace(/[^a-z0-9]/g, '_')
 
-    if (!this.client || !serverConfig.isGeminiConfigured) {
+    if (!this.getClient() || !serverConfig.isGeminiConfigured) {
       const words = trimmed.toLowerCase().split(/\s+/)
       const matchWords = (topChunk?.text || '').toLowerCase().split(/\s+/)
       const overlaps = words.filter((w) => w.length > 4 && matchWords.includes(w))
@@ -1315,7 +1362,7 @@ STUDENT STATEMENT:
 
     try {
       const raw = await this.generateContent(prompt, systemInstruction)
-      const parsed = JSON.parse(raw)
+      const parsed = cleanAndParseJson(raw)
       return {
         isExplanatory: Boolean(parsed.isExplanatory),
         topicName: parsed.topicName || inferredTopic,

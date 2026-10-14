@@ -5,8 +5,9 @@ import type {
   QuestionType,
 } from '@/types/quiz'
 import type { ProcessedChunk } from '@/types/chunk'
+import { getApiEndpoint } from './apiConfig'
 
-const API_BASE_URL = '/api/ai'
+const getEndpoint = (path: string) => getApiEndpoint(`/api/ai${path}`)
 
 export interface GenerateQuizApiParams {
   courseId: string
@@ -36,7 +37,7 @@ export interface GeneratedQuizApiResponse {
 export const generateGroundedQuizApi = async (
   params: GenerateQuizApiParams
 ): Promise<GeneratedQuizApiResponse> => {
-  const res = await fetch(`${API_BASE_URL}/quiz/generate`, {
+  const res = await fetch(getEndpoint('/quiz/generate'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
@@ -58,7 +59,7 @@ export const evaluateQuizAnswerApi = async (
   studentAnswer: string,
   preferredLanguage: string = 'en'
 ): Promise<QuestionAnswerResult> => {
-  const res = await fetch(`${API_BASE_URL}/quiz/evaluate`, {
+  const res = await fetch(getEndpoint('/quiz/evaluate'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ question, studentAnswer, preferredLanguage }),
@@ -82,7 +83,7 @@ export const requestRemedyActionApi = async (params: {
   correctConcept: string
   sourceContext?: string
 }): Promise<string> => {
-  const res = await fetch(`${API_BASE_URL}/quiz/remedy`, {
+  const res = await fetch(getEndpoint('/quiz/remedy'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),

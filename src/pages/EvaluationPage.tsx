@@ -28,6 +28,7 @@ import {
 import type { CourseMaterial } from '@/types/course'
 import type { QuizAttempt } from '@/types/quiz'
 import type { TopicMastery, PersonalizedRecommendation } from '@/types/mastery'
+import { getApiEndpoint } from '@/services/apiConfig'
 
 interface BenchmarkData {
   runId: string
@@ -201,7 +202,7 @@ export const EvaluationPage: React.FC = () => {
     setBenchmarkStatusMsg('Executing RAGAS Triad & Student Simulation benchmark...')
 
     try {
-      const res = await fetch('/api/ai/evaluation/benchmark', {
+      const res = await fetch(getApiEndpoint('/api/ai/evaluation/benchmark'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       })

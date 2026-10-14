@@ -152,9 +152,8 @@ export const extractPptxSlides = async (
         const hasFigureMarkers = /(figure|fig\.|diagram|architecture|flowchart|pipeline|workflow|schematic|network)\b/i.test(text)
         if (!text || text.length < 80 || imgBase64 || hasFigureMarkers) {
           try {
-            const endpoint = typeof window !== 'undefined'
-              ? '/api/ai/vision/describe'
-              : (process.env.API_BASE_URL || 'http://localhost:5000') + '/api/ai/vision/describe'
+            const { getApiEndpoint } = await import('@/services/apiConfig')
+            const endpoint = getApiEndpoint('/api/ai/vision/describe')
             const res = await fetch(endpoint, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },

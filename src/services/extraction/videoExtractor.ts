@@ -1,5 +1,6 @@
 import type { ProcessedChunk } from '@/types/chunk'
 import type { CourseMaterial } from '@/types/course'
+import { getApiEndpoint } from '@/services/apiConfig'
 
 export interface VideoTranscriptSegment {
   id: string
@@ -40,11 +41,7 @@ export class WhisperSpeechToTextProvider implements ISpeechToTextProvider {
   private apiEndpoint: string
 
   constructor(apiEndpoint?: string) {
-    this.apiEndpoint =
-      apiEndpoint ||
-      (typeof window !== 'undefined'
-        ? '/api/ai/transcribe'
-        : (process.env.API_BASE_URL || 'http://localhost:5000') + '/api/ai/transcribe')
+    this.apiEndpoint = apiEndpoint || getApiEndpoint('/api/ai/transcribe')
   }
 
   public isConfigured(): boolean {
