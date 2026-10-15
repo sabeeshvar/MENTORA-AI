@@ -26,12 +26,14 @@ import {
   getCourseQuizzes,
   getUserQuizAttempts,
   saveQuiz,
+  getTopicMastery,
 } from '@/lib/supabase/db'
 import { useTranslation } from '@/context/LanguageContext'
 import {
   generateGroundedQuizApi,
   evaluateQuizAnswerApi,
   requestRemedyActionApi,
+  submitQuizAttemptApi,
 } from '@/services/quizApi'
 import { MasteryService } from '@/services/masteryService'
 import { getMasteryStatus, type TopicMastery } from '@/types/mastery'
@@ -93,8 +95,11 @@ export const QuizzesPage: React.FC = () => {
 
   // State: Quiz Finished Summary
   const [quizFinished, setQuizFinished] = useState(false)
+  const [isSubmittingAttempt, setIsSubmittingAttempt] = useState(false)
   const [savedAttempt, setSavedAttempt] = useState<QuizAttempt | null>(null)
   const [updatedMasteries, setUpdatedMasteries] = useState<TopicMastery[]>([])
+  const [nextAdaptiveDifficulty, setNextAdaptiveDifficulty] = useState<QuizDifficulty | null>(null)
+  const [nextRecommendedTopic, setNextRecommendedTopic] = useState<string | null>(null)
 
   // Load User Courses on mount
   useEffect(() => {
@@ -191,6 +196,20 @@ export const QuizzesPage: React.FC = () => {
 
     const { priorTexts, priorHashes } = getHistoricalQuestionsAndHashes()
 
+    // Fetch existing learner mastery for the target topic to guide adaptive generation
+    let learnerMastery: { masteryScore: number; recentMistakes?: string[] } | undefined
+    try {
+      const tm = await getTopicMastery(user.uid, genTopic.trim())
+      if (tm) {
+        learnerMastery = {
+          masteryScore: tm.masteryScore,
+          recentMistakes: tm.misconceptions || [],
+        }
+      }
+    } catch {
+      // Graceful fallback if mastery read times out
+    }
+
     try {
       const generated = await generateGroundedQuizApi({
         courseId: selectedCourseId,
@@ -202,6 +221,7 @@ export const QuizzesPage: React.FC = () => {
         preferredLanguage: language,
         priorQuestionTexts: priorTexts,
         priorQuestionHashes: priorHashes,
+        learnerMastery,
       })
 
       const newQuiz: Quiz = {
@@ -360,7 +380,7 @@ export const QuizzesPage: React.FC = () => {
 
   // Advance to next question or complete quiz
   const handleNextQuestion = async () => {
-    if (!activeQuiz) return
+    if (!activeQuiz || isSubmittingAttempt) return
 
     if (currentQuestionIndex + 1 < activeQuiz.questions.length) {
       setCurrentQuestionIndex((prev) => prev + 1)
@@ -369,44 +389,93 @@ export const QuizzesPage: React.FC = () => {
       setEvaluatedResult(null)
       setRemedyActionResponse(null)
     } else {
-      // Complete Quiz: save attempt, compute mastery, generate recommendations!
-      const correctCount = quizResults.filter((r) => r.isCorrect).length
-      const totalCount = activeQuiz.questions.length
-      const accuracyPct = Math.round((correctCount / totalCount) * 100)
+      // Complete Quiz: Call server-side submission pipeline to evaluate, persist attempt,
+      // and deterministically update topic mastery.
+      setIsSubmittingAttempt(true)
       const durationSecs = Math.max(1, Math.round((Date.now() - quizStartTime) / 1000))
       const isDiag = !!activeQuiz.isDiagnostic
 
-      const attempt: QuizAttempt = {
-        attemptId: `att_${Date.now()}`,
-        quizId: activeQuiz.quizId,
-        courseId: activeQuiz.courseId,
-        userId: user?.uid || 'guest',
-        topic: activeQuiz.topic,
-        difficulty: activeQuiz.difficulty,
-        totalQuestions: totalCount,
-        correctCount,
-        accuracyPercentage: accuracyPct,
-        timeSpentSeconds: durationSecs,
-        completedAt: new Date().toISOString(),
-        results: quizResults,
-        isDiagnostic: isDiag,
-      }
+      const answersPayload = activeQuiz.questions.map((q, idx) => {
+        const res = quizResults.find((r) => r.questionId === q.questionId) || quizResults[idx]
+        return {
+          questionId: q.questionId,
+          studentAnswer: res?.studentAnswer || '',
+          question: q,
+        }
+      })
 
-      setSavedAttempt(attempt)
-      setQuizFinished(true)
+      try {
+        const subRes = await submitQuizAttemptApi({
+          quizId: activeQuiz.quizId,
+          courseId: activeQuiz.courseId,
+          userId: user?.uid || 'guest',
+          topic: activeQuiz.topic,
+          difficulty: activeQuiz.difficulty,
+          answers: answersPayload,
+          questions: activeQuiz.questions,
+          timeSpentSeconds: durationSecs,
+          isDiagnostic: isDiag,
+        })
 
-      if (isDiag && user) {
-        localStorage.setItem(`mentora_diagnostic_completed_${user.uid}_${activeQuiz.courseId}`, 'true')
-      }
+        if (subRes && subRes.attempt) {
+          setSavedAttempt(subRes.attempt)
+          setUpdatedMasteries(subRes.updatedMasteries || [])
+          setRecentAttempts((prev) => [subRes.attempt, ...prev])
+          if (subRes.nextAdaptiveDifficulty) {
+            setNextAdaptiveDifficulty(subRes.nextAdaptiveDifficulty)
+          }
+          if (subRes.nextRecommendedTopic) {
+            setNextRecommendedTopic(subRes.nextRecommendedTopic)
+          }
+        } else {
+          throw new Error('Server submission returned failure')
+        }
+      } catch (submitErr) {
+        console.warn('Server submission fallback to client processing:', submitErr)
+        // Deterministic client fallback if server endpoint is unreachable
+        const correctCount = quizResults.filter((r) => r.isCorrect).length
+        const totalCount = activeQuiz.questions.length
+        const accuracyPct = Math.round((correctCount / totalCount) * 100)
 
-      // Trigger Mastery Engine and Adaptive Recommendation update
-      if (user) {
-        MasteryService.processQuizAttempt(attempt)
-          .then(({ updatedMasteries: masteries }) => {
+        const fallbackAttempt: QuizAttempt = {
+          attemptId: `att_${Date.now()}`,
+          quizId: activeQuiz.quizId,
+          courseId: activeQuiz.courseId,
+          userId: user?.uid || 'guest',
+          topic: activeQuiz.topic,
+          difficulty: activeQuiz.difficulty,
+          totalQuestions: totalCount,
+          correctCount,
+          accuracyPercentage: accuracyPct,
+          timeSpentSeconds: durationSecs,
+          completedAt: new Date().toISOString(),
+          results: quizResults,
+          isDiagnostic: isDiag,
+        }
+
+        setSavedAttempt(fallbackAttempt)
+
+        if (user) {
+          try {
+            const { updatedMasteries: masteries } = await MasteryService.processQuizAttempt(fallbackAttempt)
             setUpdatedMasteries(masteries)
-            setRecentAttempts((prev) => [attempt, ...prev])
-          })
-          .catch((err) => console.warn('Mastery processing error:', err))
+            setRecentAttempts((prev) => [fallbackAttempt, ...prev])
+          } catch (mErr) {
+            console.warn('Mastery processing error:', mErr)
+          }
+        }
+
+        // Recommend next difficulty based on accuracy percentage
+        if (accuracyPct >= 80) setNextAdaptiveDifficulty('hard')
+        else if (accuracyPct >= 50) setNextAdaptiveDifficulty('medium')
+        else setNextAdaptiveDifficulty('easy')
+      } finally {
+        setIsSubmittingAttempt(false)
+        setQuizFinished(true)
+
+        if (isDiag && user) {
+          localStorage.setItem(`mentora_diagnostic_completed_${user.uid}_${activeQuiz.courseId}`, 'true')
+        }
       }
     }
   }
@@ -745,9 +814,15 @@ export const QuizzesPage: React.FC = () => {
                   size="md"
                   variant="primary"
                   onClick={handleNextQuestion}
-                  rightIcon={<ArrowRight className="w-4 h-4" />}
+                  disabled={isSubmittingAttempt}
+                  leftIcon={
+                    isSubmittingAttempt ? <Loader2 className="w-4 h-4 animate-spin" /> : undefined
+                  }
+                  rightIcon={!isSubmittingAttempt ? <ArrowRight className="w-4 h-4" /> : undefined}
                 >
-                  {currentQuestionIndex + 1 < activeQuiz.questions.length
+                  {isSubmittingAttempt
+                    ? 'Submitting & Updating Mastery...'
+                    : currentQuestionIndex + 1 < activeQuiz.questions.length
                     ? 'Next Question'
                     : 'Finish & View Mastery Impact'}
                 </Button>
@@ -839,6 +914,63 @@ export const QuizzesPage: React.FC = () => {
               </div>
             </div>
           )}
+
+          {/* Adaptive Next Step Recommendation */}
+          <div className="p-4 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 text-left max-w-xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5" />
+                Adaptive Recommendation for Next Session
+              </span>
+              <p className="text-xs text-slate-200">
+                Calibrated difficulty:{' '}
+                <strong className="text-indigo-300 uppercase font-bold">
+                  {nextAdaptiveDifficulty ||
+                    (savedAttempt.accuracyPercentage >= 75
+                      ? 'hard'
+                      : savedAttempt.accuracyPercentage >= 40
+                      ? 'medium'
+                      : 'easy')}
+                </strong>
+                {nextRecommendedTopic ? (
+                  <>
+                    {' '}
+                    on target topic: <strong className="text-teal-300">{nextRecommendedTopic}</strong>
+                  </>
+                ) : null}
+              </p>
+              <p className="text-[11px] text-slate-400">
+                {savedAttempt.accuracyPercentage >= 75
+                  ? 'Mastery demonstrated. Next quiz will emphasize deeper application and synthesis.'
+                  : savedAttempt.accuracyPercentage >= 40
+                  ? 'Developing understanding. Next quiz balances foundational reinforcement with applied scenarios.'
+                  : 'Foundational gaps identified. Next quiz focuses on core definitions and prerequisite reinforcement.'}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => {
+                const targetTopic = nextRecommendedTopic || activeQuiz.topic
+                const targetDiff =
+                  nextAdaptiveDifficulty ||
+                  (savedAttempt.accuracyPercentage >= 75
+                    ? 'hard'
+                    : savedAttempt.accuracyPercentage >= 40
+                    ? 'medium'
+                    : 'easy')
+                setGenTopic(targetTopic)
+                setGenDifficulty(targetDiff)
+                setActiveQuiz(null)
+                setQuizFinished(false)
+                setShowGenModal(true)
+              }}
+              leftIcon={<Sparkles className="w-3.5 h-3.5" />}
+              className="shrink-0"
+            >
+              Configure Next Quiz
+            </Button>
+          </div>
 
           {/* Post-Assessment Performance Report (Req 3c) */}
           <div className="pt-6 border-t border-slate-800/80 text-left space-y-6 max-w-2xl mx-auto">
@@ -997,11 +1129,35 @@ export const QuizzesPage: React.FC = () => {
 
             <Button
               size="md"
-              variant="primary"
+              variant="secondary"
               onClick={() => startQuiz(activeQuiz)}
               leftIcon={<Play className="w-4 h-4" />}
             >
               Retake Quiz
+            </Button>
+
+            <Button
+              size="md"
+              variant="primary"
+              onClick={() => {
+                const targetTopic = nextRecommendedTopic || activeQuiz.topic
+                const targetDiff =
+                  nextAdaptiveDifficulty ||
+                  (savedAttempt.accuracyPercentage >= 75
+                    ? 'hard'
+                    : savedAttempt.accuracyPercentage >= 40
+                    ? 'medium'
+                    : 'easy')
+                setGenTopic(targetTopic)
+                setGenDifficulty(targetDiff)
+                setActiveQuiz(null)
+                setQuizFinished(false)
+                setShowGenModal(true)
+              }}
+              leftIcon={<Sparkles className="w-4 h-4" />}
+              className="shadow-lg shadow-emerald-950/40"
+            >
+              Generate Next Adaptive Quiz
             </Button>
           </div>
         </Card>
@@ -1275,9 +1431,21 @@ export const QuizzesPage: React.FC = () => {
             </div>
 
             {genError && (
-              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-200 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-                <span>{genError}</span>
+              <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-200 text-xs flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span>{genError}</span>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={(e) => handleGenerateQuiz(e as any)}
+                  disabled={isGenerating || !genTopic.trim()}
+                  className="text-xs py-1 px-2.5 h-auto border-rose-500/40 text-rose-300 hover:bg-rose-500/20 shrink-0"
+                >
+                  Retry
+                </Button>
               </div>
             )}
 

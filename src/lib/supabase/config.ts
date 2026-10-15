@@ -8,12 +8,12 @@
  * Never import or expose SUPABASE_SERVICE_ROLE_KEY or GEMINI_API_KEY in frontend code!
  */
 
-const rawUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) 
-  ? String(import.meta.env.VITE_SUPABASE_URL).trim() 
+const rawUrl = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SUPABASE_URL) 
+  ? String((import.meta as any).env.VITE_SUPABASE_URL).trim() 
   : (typeof process !== 'undefined' && process.env ? String(process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '').trim() : '')
 
-const rawAnonKey = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY) 
-  ? String(import.meta.env.VITE_SUPABASE_ANON_KEY).trim() 
+const rawAnonKey = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SUPABASE_ANON_KEY) 
+  ? String((import.meta as any).env.VITE_SUPABASE_ANON_KEY).trim() 
   : (typeof process !== 'undefined' && process.env ? String(process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '').trim() : '')
 
 /**

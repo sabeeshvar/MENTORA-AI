@@ -17,6 +17,41 @@ export const defaultLearningStats: LearningStats = {
   lastActiveDate: new Date().toISOString().split('T')[0],
 }
 
+const memoryStore = new Map<string, string>()
+
+export const safeStorage = {
+  getItem: (key: string): string | null => {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        return localStorage.getItem(key)
+      } catch {
+        return memoryStore.get(key) || null
+      }
+    }
+    return memoryStore.get(key) || null
+  },
+  setItem: (key: string, value: string): void => {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(key, value)
+      } catch {
+        // Fall back to memory
+      }
+    }
+    memoryStore.set(key, value)
+  },
+  removeItem: (key: string): void => {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.removeItem(key)
+      } catch {
+        // Fall back to memory
+      }
+    }
+    memoryStore.delete(key)
+  },
+}
+
 // ==========================================
 // 1. User Profiles
 // ==========================================
@@ -24,7 +59,7 @@ export const defaultLearningStats: LearningStats = {
 export const getUserDocument = async (uid: string): Promise<UserProfile | null> => {
   if (!uid) return null
   if (!isSupabaseConfigured()) {
-    const local = localStorage.getItem(`mentora_user_${uid}`) || localStorage.getItem('mentora_demo_user')
+    const local = safeStorage.getItem(`mentora_user_${uid}`) || safeStorage.getItem('mentora_demo_user')
     return local ? JSON.parse(local) : null
   }
 
@@ -709,9 +744,9 @@ export const getMaterialChunks = async (
 export const saveTopicMastery = async (mastery: TopicMastery): Promise<void> => {
   const { userId, topicId } = mastery
   const localKey = `mentora_mastery_${userId}`
-  const existingList: TopicMastery[] = JSON.parse(localStorage.getItem(localKey) || '[]')
+  const existingList: TopicMastery[] = JSON.parse(safeStorage.getItem(localKey) || '[]')
   const filtered = existingList.filter((m) => m.topicId !== topicId)
-  localStorage.setItem(localKey, JSON.stringify([mastery, ...filtered]))
+  safeStorage.setItem(localKey, JSON.stringify([mastery, ...filtered]))
 
   if (isSupabaseConfigured()) {
     try {
@@ -741,18 +776,19 @@ export const getTopicMastery = async (
   topicId: string
 ): Promise<TopicMastery | null> => {
   const localKey = `mentora_mastery_${userId}`
-  const existingList: TopicMastery[] = JSON.parse(localStorage.getItem(localKey) || '[]')
-  const match = existingList.find((m) => m.topicId === topicId)
-  if (match) return match
+  const existingList: TopicMastery[] = JSON.parse(safeStorage.getItem(localKey) || '[]')
+  const localMatch = existingList.find((m) => m.topicId === topicId)
 
-  if (isSupabaseConfigured()) {
+  if (isSupabaseConfigured() && isValidUuid(userId)) {
     try {
-      const { data, error } = await supabase
-        .from('mastery')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('topic_id', topicId)
-        .single()
+      const { data, error } = await withTimeout(
+        supabase
+          .from('mastery')
+          .select('*')
+          .eq('user_id', userId)
+          .eq('topic_id', topicId)
+          .single()
+      )
 
       if (!error && data) {
         return {
@@ -767,45 +803,56 @@ export const getTopicMastery = async (
           lastAttemptAt: data.last_attempt_at,
           difficultyLevel: data.difficulty_level,
           trend: data.trend,
+          weakAreas: data.weak_areas || [],
+          misconceptions: data.misconceptions || [],
           updatedAt: data.updated_at,
         }
       }
     } catch (err) {
-      console.warn('Supabase getTopicMastery failed:', err)
+      console.warn('Supabase getTopicMastery failed (fallback to local):', err)
     }
   }
 
-  return null
+  return localMatch || null
 }
 
 export const getUserTopicMasteries = async (userId: string): Promise<TopicMastery[]> => {
   const localKey = `mentora_mastery_${userId}`
-  const existingList: TopicMastery[] = JSON.parse(localStorage.getItem(localKey) || '[]')
+  const existingList: TopicMastery[] = JSON.parse(safeStorage.getItem(localKey) || '[]')
 
-  if (!isSupabaseConfigured() || existingList.length > 0) {
-    return existingList
-  }
+  if (isSupabaseConfigured() && isValidUuid(userId)) {
+    try {
+      const { data, error } = await withTimeout(
+        supabase.from('mastery').select('*').eq('user_id', userId)
+      )
+      if (!error && data && data.length > 0) {
+        const remoteList: TopicMastery[] = data.map((d: any) => ({
+          topicId: d.topic_id,
+          courseId: d.course_id,
+          userId: d.user_id,
+          topicName: d.topic_name,
+          masteryScore: d.mastery_score,
+          attempts: d.attempts,
+          correctAnswers: d.correct_answers,
+          incorrectAnswers: d.incorrect_answers,
+          lastAttemptAt: d.last_attempt_at,
+          difficultyLevel: d.difficulty_level,
+          trend: d.trend,
+          weakAreas: d.weak_areas || [],
+          misconceptions: d.misconceptions || [],
+          updatedAt: d.updated_at,
+        }))
 
-  try {
-    const { data, error } = await supabase.from('mastery').select('*').eq('user_id', userId)
-    if (!error && data) {
-      return data.map((d) => ({
-        topicId: d.topic_id,
-        courseId: d.course_id,
-        userId: d.user_id,
-        topicName: d.topic_name,
-        masteryScore: d.mastery_score,
-        attempts: d.attempts,
-        correctAnswers: d.correct_answers,
-        incorrectAnswers: d.incorrect_answers,
-        lastAttemptAt: d.last_attempt_at,
-        difficultyLevel: d.difficulty_level,
-        trend: d.trend,
-        updatedAt: d.updated_at,
-      }))
+        const map = new Map<string, TopicMastery>()
+        remoteList.forEach((m) => map.set(m.topicId, m))
+        existingList.forEach((m) => {
+          if (!map.has(m.topicId)) map.set(m.topicId, m)
+        })
+        return Array.from(map.values())
+      }
+    } catch (err) {
+      console.warn('Supabase getUserTopicMasteries failed (returning local):', err)
     }
-  } catch (err) {
-    console.warn('Supabase getUserTopicMasteries failed:', err)
   }
 
   return existingList
@@ -815,14 +862,34 @@ export const getUserTopicMasteries = async (userId: string): Promise<TopicMaster
 // 6. Quizzes & Assessments
 // ==========================================
 
+export const isValidUuid = (id?: string): boolean => {
+  if (!id || typeof id !== 'string') return false
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+}
+
+export const withTimeout = async <T>(promise: PromiseLike<T>, ms: number = 3000): Promise<T> => {
+  let timer: any
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Supabase request timed out after ${ms}ms`)), ms)
+  })
+  try {
+    const result = await Promise.race([Promise.resolve(promise), timeoutPromise])
+    return result
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export const saveQuiz = async (quiz: Quiz): Promise<void> => {
   const localKey = `mentora_quizzes_${quiz.courseId}`
-  const existing: Quiz[] = JSON.parse(localStorage.getItem(localKey) || '[]')
-  localStorage.setItem(localKey, JSON.stringify([quiz, ...existing]))
+  const existing: Quiz[] = JSON.parse(safeStorage.getItem(localKey) || '[]')
+  // Update or prepend locally
+  const filtered = existing.filter((q) => q.quizId !== quiz.quizId)
+  safeStorage.setItem(localKey, JSON.stringify([quiz, ...filtered]))
 
-  if (isSupabaseConfigured()) {
+  if (isSupabaseConfigured() && isValidUuid(quiz.userId) && isValidUuid(quiz.courseId)) {
     try {
-      await supabase.from('quizzes').insert({
+      const payload: any = {
         user_id: quiz.userId,
         course_id: quiz.courseId,
         topic: quiz.topic,
@@ -830,9 +897,13 @@ export const saveQuiz = async (quiz: Quiz): Promise<void> => {
         difficulty: quiz.difficulty,
         questions: quiz.questions,
         is_diagnostic: quiz.isDiagnostic || false,
-      })
+      }
+      if (isValidUuid(quiz.quizId)) {
+        payload.id = quiz.quizId
+      }
+      await withTimeout(supabase.from('quizzes').insert(payload))
     } catch (err) {
-      console.warn('Supabase saveQuiz failed:', err)
+      console.warn('Supabase saveQuiz failed (persisted locally):', err)
     }
   }
 }
@@ -842,31 +913,70 @@ export const getCourseQuizzes = async (
   courseId: string
 ): Promise<Quiz[]> => {
   const localKey = `mentora_quizzes_${courseId}`
-  const existing: Quiz[] = JSON.parse(localStorage.getItem(localKey) || '[]')
-  return existing
+  const localList: Quiz[] = JSON.parse(safeStorage.getItem(localKey) || '[]')
+
+  if (isSupabaseConfigured() && isValidUuid(courseId)) {
+    try {
+      const { data, error } = await withTimeout(
+        supabase
+          .from('quizzes')
+          .select('*')
+          .eq('course_id', courseId)
+          .order('created_at', { ascending: false })
+      )
+      if (!error && data && data.length > 0) {
+        const remoteQuizzes: Quiz[] = data.map((d: any) => ({
+          quizId: d.id,
+          courseId: d.course_id,
+          userId: d.user_id,
+          topic: d.topic,
+          title: d.title,
+          difficulty: d.difficulty,
+          questions: d.questions,
+          createdAt: d.created_at,
+          isDiagnostic: d.is_diagnostic,
+        }))
+        const map = new Map<string, Quiz>()
+        remoteQuizzes.forEach((q) => map.set(q.quizId, q))
+        localList.forEach((q) => {
+          if (!map.has(q.quizId)) map.set(q.quizId, q)
+        })
+        return Array.from(map.values())
+      }
+    } catch (err) {
+      console.warn('Supabase getCourseQuizzes failed (returning local):', err)
+    }
+  }
+
+  return localList
 }
 
 export const saveUserQuizAttempt = async (attempt: QuizAttempt): Promise<void> => {
   const localKey = `mentora_attempts_${attempt.userId}`
-  const existing: QuizAttempt[] = JSON.parse(localStorage.getItem(localKey) || '[]')
-  localStorage.setItem(localKey, JSON.stringify([attempt, ...existing]))
+  const existing: QuizAttempt[] = JSON.parse(safeStorage.getItem(localKey) || '[]')
+  const filtered = existing.filter((a) => a.attemptId !== attempt.attemptId)
+  safeStorage.setItem(localKey, JSON.stringify([attempt, ...filtered]))
 
-  if (isSupabaseConfigured()) {
+  if (isSupabaseConfigured() && isValidUuid(attempt.userId) && isValidUuid(attempt.courseId)) {
     try {
-      await supabase.from('quiz_attempts').insert({
+      const payload: any = {
         user_id: attempt.userId,
         course_id: attempt.courseId,
         quiz_id: attempt.quizId,
         topic: attempt.topic,
-        score: attempt.score,
+        score: attempt.score ?? 0,
         correct_count: attempt.correctCount,
         total_questions: attempt.totalQuestions,
         difficulty: attempt.difficulty,
         results: attempt.results,
         is_diagnostic: attempt.isDiagnostic || false,
-      })
+      }
+      if (isValidUuid(attempt.attemptId)) {
+        payload.id = attempt.attemptId
+      }
+      await withTimeout(supabase.from('quiz_attempts').insert(payload))
     } catch (err) {
-      console.warn('Supabase saveUserQuizAttempt failed:', err)
+      console.warn('Supabase saveUserQuizAttempt failed (persisted locally):', err)
     }
   }
 }
@@ -876,11 +986,57 @@ export const getUserQuizAttempts = async (
   courseId?: string
 ): Promise<QuizAttempt[]> => {
   const localKey = `mentora_attempts_${userId}`
-  const existing: QuizAttempt[] = JSON.parse(localStorage.getItem(localKey) || '[]')
-  if (courseId) {
-    return existing.filter((a) => a.courseId === courseId)
+  const localList: QuizAttempt[] = JSON.parse(safeStorage.getItem(localKey) || '[]')
+
+  if (isSupabaseConfigured() && isValidUuid(userId)) {
+    try {
+      let query = supabase
+        .from('quiz_attempts')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+
+      if (courseId && isValidUuid(courseId)) {
+        query = query.eq('course_id', courseId)
+      }
+
+      const { data, error } = await withTimeout(query)
+      if (!error && data && data.length > 0) {
+        const remoteAttempts: QuizAttempt[] = data.map((d: any) => ({
+          attemptId: d.id,
+          quizId: d.quiz_id,
+          courseId: d.course_id,
+          userId: d.user_id,
+          topic: d.topic,
+          difficulty: d.difficulty,
+          totalQuestions: d.total_questions,
+          correctCount: d.correct_count,
+          accuracyPercentage: Math.round(
+            ((d.correct_count || 0) / Math.max(1, d.total_questions || 1)) * 100
+          ),
+          timeSpentSeconds: d.time_spent_seconds || 30,
+          completedAt: d.created_at,
+          results: d.results,
+          score: d.score,
+          isDiagnostic: d.is_diagnostic,
+        }))
+        const map = new Map<string, QuizAttempt>()
+        remoteAttempts.forEach((a) => map.set(a.attemptId, a))
+        localList.forEach((a) => {
+          if (!map.has(a.attemptId)) map.set(a.attemptId, a)
+        })
+        const merged = Array.from(map.values())
+        return courseId ? merged.filter((a) => a.courseId === courseId) : merged
+      }
+    } catch (err) {
+      console.warn('Supabase getUserQuizAttempts failed (returning local):', err)
+    }
   }
-  return existing
+
+  if (courseId) {
+    return localList.filter((a) => a.courseId === courseId)
+  }
+  return localList
 }
 
 // ==========================================
@@ -889,7 +1045,7 @@ export const getUserQuizAttempts = async (
 
 export const saveStudyPlan = async (plan: StudyPlan): Promise<void> => {
   const localKey = `mentora_study_plan_${plan.userId}_${plan.courseId}`
-  localStorage.setItem(localKey, JSON.stringify(plan))
+  safeStorage.setItem(localKey, JSON.stringify(plan))
 
   if (isSupabaseConfigured()) {
     try {
@@ -915,7 +1071,7 @@ export const getStudyPlan = async (
   courseId: string
 ): Promise<StudyPlan | null> => {
   const localKey = `mentora_study_plan_${userId}_${courseId}`
-  const local = localStorage.getItem(localKey)
+  const local = safeStorage.getItem(localKey)
   if (local) {
     try {
       return JSON.parse(local)
@@ -963,9 +1119,9 @@ export const getStudyPlan = async (
 
 export const saveRevisionItem = async (item: RevisionItem): Promise<void> => {
   const localKey = `mentora_revisions_${item.userId}`
-  const existing: RevisionItem[] = JSON.parse(localStorage.getItem(localKey) || '[]')
+  const existing: RevisionItem[] = JSON.parse(safeStorage.getItem(localKey) || '[]')
   const filtered = existing.filter((i) => i.topicId !== item.topicId)
-  localStorage.setItem(localKey, JSON.stringify([item, ...filtered]))
+  safeStorage.setItem(localKey, JSON.stringify([item, ...filtered]))
 
   if (isSupabaseConfigured()) {
     try {
@@ -995,7 +1151,7 @@ export const getUserRevisionItems = async (
   courseId?: string
 ): Promise<RevisionItem[]> => {
   const localKey = `mentora_revisions_${userId}`
-  const existing: RevisionItem[] = JSON.parse(localStorage.getItem(localKey) || '[]')
+  const existing: RevisionItem[] = JSON.parse(safeStorage.getItem(localKey) || '[]')
   if (courseId) {
     return existing.filter((i) => i.courseId === courseId)
   }
@@ -1011,7 +1167,7 @@ export const saveUserRecommendations = async (
   recs: PersonalizedRecommendation[]
 ): Promise<void> => {
   const localKey = `mentora_recs_${userId}`
-  localStorage.setItem(localKey, JSON.stringify(recs))
+  safeStorage.setItem(localKey, JSON.stringify(recs))
 
   if (isSupabaseConfigured()) {
     try {
@@ -1038,7 +1194,7 @@ export const getUserRecommendations = async (
   userId: string
 ): Promise<PersonalizedRecommendation[]> => {
   const localKey = `mentora_recs_${userId}`
-  const local = localStorage.getItem(localKey)
+  const local = safeStorage.getItem(localKey)
   if (local) {
     try {
       return JSON.parse(local)

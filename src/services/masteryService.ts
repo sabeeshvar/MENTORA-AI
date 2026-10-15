@@ -11,7 +11,17 @@ import type {
 } from '@/types/mastery'
 import type { QuizAttempt, QuizDifficulty } from '@/types/quiz'
 
+// Global in-memory set to prevent duplicate attempts and repeated mastery updates
+const processedAttempts = new Set<string>()
+
 export class MasteryService {
+  /**
+   * Resets processed attempts cache (useful for test isolation)
+   */
+  public static clearProcessedAttempts(): void {
+    processedAttempts.clear()
+  }
+
   /**
    * Calculates the updated mastery score for a topic after an answered question or quiz
    * Uses dampened exponential moving average so mastery does not wildly swing after a single question
@@ -71,8 +81,21 @@ export class MasteryService {
       throw new Error('UserId is required to process quiz attempt')
     }
 
-    // Find or initialize topic mastery
     const topicId = topic.toLowerCase().replace(/[^a-z0-9]/g, '_')
+
+    // Idempotency guard: Prevent repeated mastery updates for the same attempt submission
+    if (attempt.attemptId && processedAttempts.has(attempt.attemptId)) {
+      const existing = await getTopicMastery(userId, topicId)
+      return {
+        updatedMasteries: existing ? [existing] : [],
+        recommendations: [],
+      }
+    }
+    if (attempt.attemptId) {
+      processedAttempts.add(attempt.attemptId)
+    }
+
+    // Find or initialize topic mastery
     const existing = await getTopicMastery(userId, topicId)
 
     let currentScore = existing?.masteryScore ?? 0.5
@@ -163,7 +186,7 @@ export class MasteryService {
     const now = new Date().toISOString()
 
     const relevantMasteries = courseId
-      ? masteries.filter((m) => !m.courseId || m.courseId === courseId)
+      ? masteries.filter((m: TopicMastery) => !m.courseId || m.courseId === courseId)
       : masteries
 
     for (const m of relevantMasteries) {
@@ -250,6 +273,17 @@ export class MasteryService {
     if (pct < 40) return 'easy'
     if (pct < 75) return 'medium'
     return 'hard'
+  }
+
+  public static recommendNextDifficulty(
+    params: { masteryScore?: number } | number = 0.5
+  ): QuizDifficulty {
+    const score = typeof params === 'number' ? params : params?.masteryScore ?? 0.5
+    return this.getRecommendedDifficulty(score)
+  }
+
+  public static identifyWeakTopics(topics: TopicMastery[]): TopicMastery[] {
+    return topics.filter((t) => t.masteryScore < 0.60)
   }
 
   /**

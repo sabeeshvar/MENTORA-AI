@@ -91,6 +91,11 @@ export class CoursePartitionedVectorStore implements IVectorStoreBackend {
 
     for (let idx = 0; idx < chunks.length; idx++) {
       const chunk = chunks[idx]
+      chunk.text = chunk.text || chunk.content || ''
+      chunk.sourceName = chunk.sourceName || chunk.materialName || 'Course Notes'
+      chunk.sourceType = chunk.sourceType || chunk.materialType || 'DOCUMENT'
+      chunk.sectionTitle = chunk.sectionTitle || 'Overview'
+
       const rawEmb: any = chunk.embedding
       if (typeof rawEmb === 'string') {
         try {
@@ -106,7 +111,7 @@ export class CoursePartitionedVectorStore implements IVectorStoreBackend {
       // If chunk is missing an embedding, compute it deterministically
       if (!chunk.embedding || !Array.isArray(chunk.embedding) || chunk.embedding.length === 0) {
         chunk.embedding = await this.embeddingService.generateEmbedding(
-          `${chunk.sectionTitle || 'Section'}: ${chunk.text || chunk.content || ''}`
+          `${chunk.sectionTitle || 'Section'}: ${chunk.text}`
         )
         chunk.embeddingModel = this.embeddingService.modelName
       }
@@ -144,12 +149,12 @@ export class CoursePartitionedVectorStore implements IVectorStoreBackend {
           chunkId: chunk.chunkId,
           courseId: chunk.courseId,
           materialId: chunk.materialId,
-          text: chunk.text,
-          sourceType: chunk.sourceType,
-          sourceName: chunk.sourceName,
+          text: chunk.text || chunk.content || '',
+          sourceType: chunk.sourceType || chunk.materialType || 'DOCUMENT',
+          sourceName: chunk.sourceName || chunk.materialName || 'Course Notes',
           pageNumber: chunk.pageNumber ?? null,
           slideNumber: chunk.slideNumber ?? null,
-          sectionTitle: chunk.sectionTitle,
+          sectionTitle: chunk.sectionTitle || 'Overview',
           chunkIndex: chunk.chunkIndex,
           similarityScore: Math.round(sim * 10000) / 10000,
           embeddingModel: chunk.embeddingModel,

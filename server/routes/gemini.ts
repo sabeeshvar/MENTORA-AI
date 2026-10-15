@@ -102,6 +102,7 @@ geminiRouter.post('/quiz/generate', async (req: Request, res: Response) => {
     preferredLanguage,
     priorQuestionTexts,
     priorQuestionHashes,
+    learnerMastery,
   } = req.body
 
   if (!courseId || !topic) {
@@ -110,21 +111,111 @@ geminiRouter.post('/quiz/generate', async (req: Request, res: Response) => {
 
   try {
     const quiz = await geminiService.generateGroundedQuiz({
-      courseId: courseId.trim(),
-      topic: topic.trim(),
-      difficulty: difficulty || 'medium',
+      courseId: String(courseId).trim(),
+      topic: String(topic).trim(),
+      difficulty: difficulty || 'adaptive',
       numberOfQuestions: typeof numberOfQuestions === 'number' ? numberOfQuestions : 4,
       questionTypes: Array.isArray(questionTypes) ? questionTypes : ['mcq', 'short_answer', 'numerical'],
       chunks: Array.isArray(chunks) ? chunks : undefined,
       preferredLanguage: typeof preferredLanguage === 'string' ? preferredLanguage : 'en',
       priorQuestionTexts: Array.isArray(priorQuestionTexts) ? priorQuestionTexts : undefined,
       priorQuestionHashes: Array.isArray(priorQuestionHashes) ? priorQuestionHashes : undefined,
+      learnerMastery: typeof learnerMastery === 'object' && learnerMastery !== null ? learnerMastery : undefined,
     })
 
     return res.json(quiz)
   } catch (error: any) {
+    const msg = error?.message || 'Failed to generate quiz'
+    const isInsufficient = msg.toLowerCase().includes('insufficient') || msg.toLowerCase().includes('no learning materials') || msg.toLowerCase().includes('no course material')
+    const statusCode = isInsufficient ? 422 : 500
+    return res.status(statusCode).json({
+      error: msg,
+      code: isInsufficient ? 'INSUFFICIENT_MATERIAL' : 'GENERATION_FAILED',
+    })
+  }
+})
+
+/**
+ * Wrong-Answer Remedy Action Endpoint
+ * Generates interactive tutor remedies: Explain Simply, Give an Example, Ask Me a Follow-up
+ */
+geminiRouter.post('/quiz/remedy', async (req: Request, res: Response) => {
+  const { action, question, studentAnswer, correctConcept, sourceContext, preferredLanguage } = req.body
+
+  if (!action || !question || !correctConcept) {
+    return res.status(400).json({ error: 'action, question, and correctConcept are required' })
+  }
+
+  const validActions = ['explain_simply', 'give_example', 'ask_followup']
+  if (!validActions.includes(action)) {
+    return res.status(400).json({ error: `action must be one of: ${validActions.join(', ')}` })
+  }
+
+  try {
+    const text = await geminiService.generateRemedyAction({
+      action,
+      question: String(question),
+      studentAnswer: String(studentAnswer || ''),
+      correctConcept: String(correctConcept),
+      sourceContext: typeof sourceContext === 'string' ? sourceContext : undefined,
+      preferredLanguage: typeof preferredLanguage === 'string' ? preferredLanguage : 'en',
+    })
+
+    return res.json({ action, text })
+  } catch (error: any) {
     return res.status(500).json({
-      error: error?.message || 'Failed to generate quiz',
+      error: error?.message || 'Remedy action failed',
+    })
+  }
+})
+
+/**
+ * Server-Side Quiz Submission & Deterministic Scoring Endpoint
+ */
+geminiRouter.post('/quiz/submit', async (req: Request, res: Response) => {
+  const {
+    quizId,
+    courseId,
+    userId,
+    topic,
+    difficulty,
+    answers,
+    questions,
+    timeSpentSeconds,
+    isDiagnostic,
+    idempotencyKey,
+    preferredLanguage,
+  } = req.body
+
+  if (!quizId || !courseId || !userId || !topic) {
+    return res.status(400).json({ error: 'quizId, courseId, userId, and topic are required' })
+  }
+  if (!Array.isArray(answers) || answers.length === 0) {
+    return res.status(400).json({ error: 'answers must be a non-empty array' })
+  }
+  if (!Array.isArray(questions) || questions.length === 0) {
+    return res.status(400).json({ error: 'questions must be a non-empty array' })
+  }
+
+  try {
+    const submissionResult = await geminiService.submitQuizAttempt({
+      quizId: String(quizId).trim(),
+      courseId: String(courseId).trim(),
+      userId: String(userId).trim(),
+      topic: String(topic).trim(),
+      difficulty: difficulty || 'medium',
+      answers,
+      questions,
+      timeSpentSeconds: typeof timeSpentSeconds === 'number' ? timeSpentSeconds : 30,
+      isDiagnostic: Boolean(isDiagnostic),
+      idempotencyKey: typeof idempotencyKey === 'string' ? idempotencyKey : undefined,
+      preferredLanguage: typeof preferredLanguage === 'string' ? preferredLanguage : 'en',
+    })
+
+    return res.json(submissionResult)
+  } catch (error: any) {
+    return res.status(500).json({
+      error: error?.message || 'Failed to submit quiz attempt',
     })
   }
 })

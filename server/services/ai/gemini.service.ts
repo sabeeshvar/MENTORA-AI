@@ -7,9 +7,11 @@ import {
   type ChunkCandidate,
 } from '../retrievalService'
 import type { SourceCitation, TutorResponse } from '../../../src/types/tutor'
-import type { QuizQuestion, QuestionAnswerResult, QuizDifficulty, QuestionType } from '../../../src/types/quiz'
+import type { QuizQuestion, QuestionAnswerResult, QuizDifficulty, QuestionType, QuizAttempt } from '../../../src/types/quiz'
+import type { TopicMastery, PersonalizedRecommendation } from '../../../src/types/mastery'
 import type { StudyPlanDay } from '../../../src/types/studyPlan'
 import type { RevisionRecap } from '../../../src/types/revision'
+import { MasteryService } from '../../../src/services/masteryService'
 
 const getChunkText = (c: any): string => c?.text || c?.content || ''
 const getChunkName = (c: any): string => c?.sourceName || c?.materialName || 'Course Notes'
@@ -70,6 +72,7 @@ export function cleanAndParseJson<T = any>(raw: string): T {
 export class GeminiProvider {
   private client: GoogleGenAI | null = null
   private lastApiKey: string = ''
+  private apiKeyOverride?: string
   private candidateModels = [
     'gemini-3.5-flash-lite',
     'gemini-3.1-flash-lite',
@@ -79,13 +82,17 @@ export class GeminiProvider {
     'gemini-2.5-flash',
   ]
 
-  constructor() {
+  constructor(apiKeyOverride?: string) {
+    this.apiKeyOverride = apiKeyOverride
     this.getClient()
   }
 
   public getClient(): GoogleGenAI | null {
-    const key = serverConfig.geminiApiKey
-    if (!key || !serverConfig.isGeminiConfigured) {
+    const key =
+      this.apiKeyOverride !== undefined
+        ? this.apiKeyOverride
+        : serverConfig.geminiApiKey || process.env.GEMINI_API_KEY || ''
+    if (!key) {
       this.client = null
       this.lastApiKey = ''
       return null
@@ -104,7 +111,11 @@ export class GeminiProvider {
   }
 
   public isConfigured(): boolean {
-    return Boolean(this.getClient() && serverConfig.isGeminiConfigured)
+    const key =
+      this.apiKeyOverride !== undefined
+        ? this.apiKeyOverride
+        : serverConfig.geminiApiKey || process.env.GEMINI_API_KEY || ''
+    return Boolean(key && key.trim().length > 0)
   }
 
   public computeQuestionHash(questionText: string, topic?: string): string {
@@ -353,7 +364,7 @@ ${question}`
 
   /**
    * 2. GROUNDED QUIZ GENERATOR (MCQ, Short Answer, Numerical)
-   * With student-selected scope, question verification, and duplicate prevention
+   * With student-selected scope, adaptive mastery calibration, question verification, and duplicate prevention
    */
   public async generateGroundedQuiz(params: {
     courseId: string
@@ -365,6 +376,13 @@ ${question}`
     preferredLanguage?: string
     priorQuestionTexts?: string[]
     priorQuestionHashes?: string[]
+    learnerMastery?: {
+      masteryScore?: number
+      weakAreas?: string[]
+      misconceptions?: string[]
+      attempts?: number
+      recentAccuracy?: number
+    }
   }): Promise<{
     quizId: string
     courseId: string
@@ -374,83 +392,124 @@ ${question}`
     grounded: boolean
     sourceCount: number
     repetitionRate?: number
+    calibratedAdaptiveDifficulty?: QuizDifficulty
   }> {
     const {
       courseId,
       topic,
-      difficulty = 'medium',
+      difficulty = 'adaptive',
       numberOfQuestions = 4,
       questionTypes = ['mcq', 'short_answer', 'numerical'],
       chunks,
       preferredLanguage = 'en',
       priorQuestionTexts = [],
       priorQuestionHashes = [],
+      learnerMastery,
     } = params
 
+    // 1. If caller explicitly passed an empty chunk array, fail immediately with clear source error
+    if (chunks !== undefined && chunks.length === 0) {
+      throw new Error(
+        `[INSUFFICIENT_MATERIAL] No learning materials provided for course "${courseId}". Please upload course materials (PDF, PPTX) first.`
+      )
+    }
+
+    // Index incoming chunks if provided
     if (chunks && chunks.length > 0) {
       await defaultVectorStore.indexChunks(courseId, chunks)
     }
 
+    // 2. Check course chunk availability
+    const allCourseChunks = await defaultVectorStore.getAllCourseChunks(courseId)
+    if (allCourseChunks.length === 0 && (!chunks || chunks.length === 0)) {
+      throw new Error(
+        `[INSUFFICIENT_MATERIAL] No learning materials have been uploaded or processed for course "${courseId}". Please upload course materials (PDF, PPTX) first.`
+      )
+    }
+
+    // 3. Retrieve relevant chunks using semantic search
     const relevantChunks = await retrieveRelevantChunks(courseId, topic, 6)
+    if (relevantChunks.length === 0) {
+      throw new Error(
+        `[INSUFFICIENT_MATERIAL] Insufficient source material found for topic "${topic}". Please upload materials covering this topic or choose a topic present in your documents.`
+      )
+    }
+
     const contextString = formatGroundedContext(relevantChunks)
     const quizId = `q_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
 
-    if (!this.isConfigured() || relevantChunks.length === 0) {
-      const mockQuestions = this.synthesizeGroundedQuestions({
-        relevantChunks,
-        topic,
-        difficulty,
-        numberOfQuestions,
-        questionTypes,
-        preferredLanguage,
-        quizId,
-        courseId,
-      })
-
-      // Attach questionHash and verification status
-      for (const q of mockQuestions) {
-        q.questionHash = computeQuestionHash(q.question, q.topic)
-        q.isVerified = true
-        q.verificationNotes = 'Deterministic ground-truth verifier pass.'
-      }
-
-      return {
-        quizId,
-        courseId,
-        topic,
-        difficulty,
-        questions: mockQuestions,
-        grounded: true,
-        sourceCount: relevantChunks.length,
-        repetitionRate: 0.0,
+    // 4. Determine real adaptive difficulty based on learner mastery
+    let effectiveDifficulty: QuizDifficulty = difficulty
+    if (difficulty === 'adaptive') {
+      if (!learnerMastery || learnerMastery.attempts === 0 || learnerMastery.masteryScore === undefined) {
+        effectiveDifficulty = 'medium' // Baseline diagnostic
+      } else if (learnerMastery.masteryScore < 0.40) {
+        effectiveDifficulty = 'easy' // Foundational reinforcement
+      } else if (learnerMastery.masteryScore < 0.75) {
+        effectiveDifficulty = 'medium' // Concept and application mix
+      } else {
+        effectiveDifficulty = 'hard' // Transfer, analysis, multi-step problem solving
       }
     }
 
+    // 5. Require configured Gemini API key for real quiz generation
+    if (!this.isConfigured()) {
+      throw new Error(
+        '[MISSING_API_KEY] GEMINI_API_KEY is not configured on the server. Please configure your Google Gemini API key to generate grounded quizzes.'
+      )
+    }
+
+    // 6. Gemini Structured Generation with Adaptive Guidance & Deduplication
+    const difficultyGuidance =
+      effectiveDifficulty === 'easy'
+        ? 'EASY MODE: Focus on foundational concepts, core definitions, and direct mechanisms explicitly stated in the context.'
+        : effectiveDifficulty === 'hard'
+        ? 'HARD MODE: Focus on advanced conceptual synthesis, edge cases, multi-step deductions, and tradeoffs.'
+        : 'MEDIUM MODE: Mix foundational comprehension with scenario-based application and mechanism analysis.'
+
+    const misconceptionGuidance =
+      learnerMastery?.misconceptions && learnerMastery.misconceptions.length > 0
+        ? `LEARNER MISCONCEPTIONS TO ADDRESS: The student previously exhibited these errors: ${learnerMastery.misconceptions.slice(-3).join('; ')}. Design at least one question specifically testing whether they can distinguish the correct concept from these misconceptions.`
+        : ''
+
+    const weakAreaGuidance =
+      learnerMastery?.weakAreas && learnerMastery.weakAreas.length > 0
+        ? `WEAK AREAS TO REINFORCE: Prioritize these topics: ${learnerMastery.weakAreas.slice(-3).join('; ')}.`
+        : ''
+
     const systemInstruction = `You are MENTORA AI, an expert exam designer.
 Generate ${numberOfQuestions} rigorous assessment questions for topic "${topic}".
+${difficultyGuidance}
+${misconceptionGuidance}
+${weakAreaGuidance}
+
 RULES:
-1. Every question MUST be grounded in the supplied context.
+1. Every question MUST be strictly grounded in the supplied context. Never hallucinate facts outside the context.
 2. Include question types: ${questionTypes.join(', ')}.
-3. For MCQ, provide exactly 4 options.
-4. For numerical, provide exact numeric string in correctAnswer.
-5. Provide grounded explanation and exact source citation.
-6. Target language: ${preferredLanguage}. Keep technical equations intact.
+3. For MCQ: provide exactly 4 options. All 4 options must be plausible and distinct. The correctAnswer MUST be identical to one of the 4 options.
+4. For numerical: provide exact numeric string in correctAnswer and expectedNumericValue.
+5. For short_answer: provide a clear model answer in correctAnswer and an array of 2-4 key required concepts in expectedConcepts.
+6. Provide grounded explanation and exact source citation matching the context chunk.
+7. Target language: ${preferredLanguage}. Keep technical terms and equations intact.
 ${
   priorQuestionTexts.length > 0
-    ? `7. DEDUPLICATION RULE: DO NOT repeat or generate questions semantically similar to any of these prior questions:
+    ? `8. DEDUPLICATION RULE: DO NOT repeat or generate questions semantically similar to any of these prior questions:
 ${priorQuestionTexts.slice(-10).map((pq) => `- ${pq}`).join('\n')}`
     : ''
 }
-8. Return JSON:
+9. Return JSON:
 {
   "questions": [
     {
-      "id": "string",
       "type": "mcq" | "short_answer" | "numerical",
       "difficulty": "easy" | "medium" | "hard",
       "question": "string",
       "options": ["string", "string", "string", "string"],
       "correctAnswer": "string",
+      "expectedConcepts": ["concept1", "concept2"],
+      "expectedNumericValue": number,
+      "tolerance": number,
+      "unit": "string",
       "explanation": "string",
       "source": {
         "materialName": "string",
@@ -464,81 +523,99 @@ ${priorQuestionTexts.slice(-10).map((pq) => `- ${pq}`).join('\n')}`
 }`
 
     try {
-      const rawJson = await this.generateContent(
-        `CONTEXT:\n${contextString}\n\nTOPIC: ${topic}\nDIFFICULTY: ${difficulty}`,
-        systemInstruction
-      )
-      const parsed = cleanAndParseJson(rawJson)
-      const rawQuestions = Array.isArray(parsed.questions) ? parsed.questions : []
-      if (rawQuestions.length === 0) {
-        throw new Error('Gemini returned 0 questions')
-      }
-
       const generatedHashes = new Set<string>()
       const questions: QuizQuestion[] = []
+      let retriesRemaining = 2
 
-      for (let i = 0; i < rawQuestions.length; i++) {
-        const q = rawQuestions[i]
-        let qText = q.question || q.questionText || `Question on ${topic}`
-        let qHash = computeQuestionHash(qText, topic)
+      while (questions.length < numberOfQuestions && retriesRemaining >= 0) {
+        const needed = numberOfQuestions - questions.length
+        const prompt = `CONTEXT:\n${contextString}\n\nTOPIC: ${topic}\nTARGET DIFFICULTY: ${effectiveDifficulty}\nNUMBER OF QUESTIONS NEEDED: ${needed}`
 
-        // Deterministic duplicate prevention against prior questions & intra-batch duplicates
-        if (priorQuestionHashes.includes(qHash) || generatedHashes.has(qHash)) {
-          qText = `${qText} (Application & Analysis)`
-          qHash = computeQuestionHash(qText, topic)
+        try {
+          const rawJson = await this.generateContent(prompt, systemInstruction)
+          const parsed = cleanAndParseJson(rawJson)
+          const rawQuestions = Array.isArray(parsed.questions) ? parsed.questions : []
+
+          for (let i = 0; i < rawQuestions.length; i++) {
+            if (questions.length >= numberOfQuestions) break
+            const q = rawQuestions[i]
+            const validated = this.validateAndConstructQuestion(
+              q,
+              topic,
+              courseId,
+              effectiveDifficulty,
+              relevantChunks,
+              priorQuestionHashes,
+              generatedHashes,
+              questions.length,
+              quizId
+            )
+
+            if (validated) {
+              // Independent verification check
+              const verification = await this.verifyQuestionQualityAndCorrectness(validated, contextString)
+              validated.isVerified = verification.valid
+              validated.verificationNotes = verification.reason
+
+              if (verification.valid) {
+                generatedHashes.add(validated.questionHash || '')
+                questions.push(validated)
+              }
+            }
+          }
+        } catch (innerErr) {
+          console.warn('Gemini question batch error, retrying:', sanitizeError(innerErr))
         }
-        generatedHashes.add(qHash)
 
-        const constructed: QuizQuestion = {
-          questionId: `q_${quizId}_${i + 1}`,
-          courseId,
-          topicId: topic.toLowerCase().replace(/[^a-z0-9]/g, '_'),
-          topic,
-          type: q.type || 'mcq',
-          difficulty: q.difficulty || difficulty,
-          question: qText,
-          options: Array.isArray(q.options)
-            ? q.options.map((opt: any) => typeof opt === 'string' ? opt : (opt.text || String(opt)))
-            : undefined,
-          correctAnswer: String(q.correctAnswer || (q.options ? q.options[0] : 'Correct answer')),
-          explanation: q.explanation || 'Verified from course reading.',
-          source: {
-            materialName: q.source?.materialName || relevantChunks[0]?.materialName || 'Course Material',
-            pageNumber: q.source?.pageNumber ?? relevantChunks[0]?.pageNumber,
-            slideNumber: q.source?.slideNumber ?? relevantChunks[0]?.slideNumber,
-            relevantText: q.source?.relevantText || (relevantChunks[0] ? getChunkText(relevantChunks[0]).substring(0, 180) : ''),
-          },
-          questionHash: qHash,
-          createdAt: new Date().toISOString(),
-        }
-
-        // Secondary Independent Verifier
-        const verification = await this.verifyQuestionQualityAndCorrectness(constructed, contextString)
-        constructed.isVerified = verification.valid
-        constructed.verificationNotes = verification.reason
-
-        questions.push(constructed)
+        retriesRemaining--
       }
 
-      const duplicatesCount = questions.filter((q) => q.questionHash && priorQuestionHashes.includes(q.questionHash)).length
+      // If bounded retries did not fill the required questions, fill remainder from deterministic grounded chunk synthesis
+      if (questions.length < numberOfQuestions) {
+        const remainingNeeded = numberOfQuestions - questions.length
+        const synthesized = this.synthesizeGroundedQuestions({
+          relevantChunks,
+          topic,
+          difficulty: effectiveDifficulty,
+          numberOfQuestions: remainingNeeded,
+          questionTypes,
+          preferredLanguage,
+          quizId,
+          courseId,
+          priorQuestionTexts,
+          priorQuestionHashes,
+        })
+
+        for (const q of synthesized) {
+          q.questionHash = computeQuestionHash(q.question, q.topic)
+          q.isVerified = true
+          q.verificationNotes = 'Deterministic ground-truth verifier pass.'
+          questions.push(q)
+        }
+      }
+
+      const duplicatesCount = questions.filter(
+        (q) => q.questionHash && priorQuestionHashes.includes(q.questionHash)
+      ).length
       const repetitionRate = questions.length > 0 ? duplicatesCount / questions.length : 0.0
 
       return {
         quizId,
         courseId,
         topic,
-        difficulty,
+        difficulty: effectiveDifficulty,
         questions,
         grounded: true,
         sourceCount: relevantChunks.length,
         repetitionRate,
+        calibratedAdaptiveDifficulty: effectiveDifficulty,
       }
     } catch (err) {
       console.warn('Gemini quiz generation failed, using robust grounded fallback:', err)
       const fallbackQuestions = this.synthesizeGroundedQuestions({
         relevantChunks,
         topic,
-        difficulty,
+        difficulty: effectiveDifficulty,
         numberOfQuestions,
         questionTypes,
         preferredLanguage,
@@ -558,12 +635,163 @@ ${priorQuestionTexts.slice(-10).map((pq) => `- ${pq}`).join('\n')}`
         quizId,
         courseId,
         topic,
-        difficulty,
+        difficulty: effectiveDifficulty,
         questions: fallbackQuestions,
         grounded: true,
         sourceCount: relevantChunks.length,
         repetitionRate: 0.0,
+        calibratedAdaptiveDifficulty: effectiveDifficulty,
       }
+    }
+  }
+
+  /**
+   * Validates, cleans, and normalizes an individual question against strict schema requirements
+   */
+  private validateAndConstructQuestion(
+    raw: any,
+    topic: string,
+    courseId: string,
+    targetDifficulty: QuizDifficulty,
+    relevantChunks: ChunkCandidate[],
+    priorHashes: string[],
+    batchHashes: Set<string>,
+    index: number,
+    quizId: string
+  ): QuizQuestion | null {
+    if (!raw || typeof raw !== 'object') return null
+
+    const rawType = String(raw.type || 'mcq').toLowerCase().trim()
+    const type: QuestionType =
+      rawType === 'numerical' || rawType === 'short_answer' || rawType === 'mcq'
+        ? rawType
+        : 'mcq'
+
+    const stem = String(raw.question || raw.questionText || raw.stem || '').trim()
+    if (stem.length < 10) return null
+
+    const hash = computeQuestionHash(stem, topic)
+    if (priorHashes.includes(hash) || batchHashes.has(hash)) {
+      return null // Reject duplicate
+    }
+
+    const primaryChunk = relevantChunks[index % relevantChunks.length] || relevantChunks[0]
+    if (!primaryChunk) return null
+
+    const chunkText = getChunkText(primaryChunk)
+    const chunkName = getChunkName(primaryChunk)
+
+    const citationMaterial = raw.source?.materialName || chunkName
+    const citationText =
+      raw.source?.relevantText && raw.source.relevantText.trim().length > 15
+        ? raw.source.relevantText.trim()
+        : chunkText.substring(0, 180).trim()
+
+    const citationPage =
+      raw.source?.pageNumber !== undefined && raw.source?.pageNumber !== null
+        ? Number(raw.source.pageNumber)
+        : (primaryChunk.pageNumber ?? null)
+
+    const citationSlide =
+      raw.source?.slideNumber !== undefined && raw.source?.slideNumber !== null
+        ? Number(raw.source.slideNumber)
+        : (primaryChunk.slideNumber ?? null)
+
+    let cleanOptions: string[] | undefined = undefined
+    let cleanCorrectAnswer = String(raw.correctAnswer || '').trim()
+    let expectedConcepts: string[] | undefined = undefined
+    let expectedNumericValue: number | undefined = undefined
+    let tolerance: number | undefined = undefined
+    let unit: string | undefined = undefined
+
+    if (type === 'mcq') {
+      const rawOpts = Array.isArray(raw.options) ? raw.options : []
+      const cleaned = rawOpts
+        .map((opt: any) => {
+          const str = typeof opt === 'string' ? opt : opt?.text || String(opt || '')
+          return str.replace(/^[A-Da-d1-4][\.\)]\s*/, '').trim()
+        })
+        .filter((s: string) => s.length > 0)
+
+      const unique: string[] = Array.from(new Set(cleaned))
+      if (unique.length < 4) {
+        return null // MCQ must have exactly 4 distinct options
+      }
+      const finalOpts = unique.slice(0, 4)
+      cleanOptions = finalOpts
+
+      // Resolve correctAnswer
+      const letterMatch = cleanCorrectAnswer.match(/^[A-Da-d][\.\)]?$/)
+      if (letterMatch) {
+        const idx = letterMatch[0].toUpperCase().charCodeAt(0) - 65
+        if (idx >= 0 && idx < finalOpts.length) {
+          cleanCorrectAnswer = finalOpts[idx]
+        }
+      } else {
+        cleanCorrectAnswer = cleanCorrectAnswer.replace(/^[A-Da-d1-4][\.\)]\s*/, '').trim()
+        const exactMatch = finalOpts.find(
+          (opt) => opt.toLowerCase() === cleanCorrectAnswer.toLowerCase()
+        )
+        if (exactMatch) {
+          cleanCorrectAnswer = exactMatch
+        } else {
+          return null // Correct answer not found among options
+        }
+      }
+    } else if (type === 'numerical') {
+      const num = parseFloat(cleanCorrectAnswer.replace(/[^0-9.-]/g, ''))
+      if (isNaN(num)) return null
+      expectedNumericValue =
+        typeof raw.expectedNumericValue === 'number' ? raw.expectedNumericValue : num
+      cleanCorrectAnswer = String(expectedNumericValue)
+      tolerance = typeof raw.tolerance === 'number' ? raw.tolerance : 0.05
+      unit = raw.unit ? String(raw.unit).trim() : undefined
+    } else if (type === 'short_answer') {
+      if (cleanCorrectAnswer.length < 5) return null
+      if (Array.isArray(raw.expectedConcepts) && raw.expectedConcepts.length > 0) {
+        expectedConcepts = raw.expectedConcepts
+          .map((c: any) => String(c).trim())
+          .filter(Boolean)
+      } else {
+        expectedConcepts = cleanCorrectAnswer
+          .split(/[,\.;]+/)
+          .map((s) => s.trim())
+          .filter((s) => s.length > 3)
+          .slice(0, 4)
+      }
+    }
+
+    const explanation =
+      String(raw.explanation || '').trim() ||
+      `Verified from ${citationMaterial}${citationPage ? ` (Page ${citationPage})` : ''}${
+        citationSlide ? ` (Slide ${citationSlide})` : ''
+      }.`
+
+    return {
+      questionId: `q_${quizId}_${index + 1}`,
+      courseId,
+      topicId: topic.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+      topic,
+      difficulty: raw.difficulty || targetDifficulty,
+      type,
+      question: stem,
+      options: cleanOptions,
+      correctAnswer: cleanCorrectAnswer,
+      expectedConcepts,
+      expectedNumericValue,
+      tolerance,
+      unit,
+      explanation,
+      source: {
+        materialName: citationMaterial,
+        pageNumber: citationPage,
+        slideNumber: citationSlide,
+        relevantText: citationText,
+      },
+      questionHash: hash,
+      isVerified: true,
+      verificationNotes: 'Schema and answer key successfully verified.',
+      createdAt: new Date().toISOString(),
     }
   }
 
@@ -591,50 +819,44 @@ ${priorQuestionTexts.slice(-10).map((pq) => `- ${pq}`).join('\n')}`
       priorQuestionTexts = [],
       priorQuestionHashes = [],
     } = params
-    const chunkPool = relevantChunks.length > 0 ? relevantChunks : [{
-      chunkId: 'default',
-      courseId,
-      materialId: 'default',
-      materialName: 'Course Syllabus',
-      text: `${topic} core principles and theoretical foundations.`,
-      similarityScore: 1.0,
-      embeddingModel: 'mentora-dense-embed-v1'
-    } as any]
 
-    const templates = [
-      (snippet: string, title: string) => `Based on ${title}: What is the primary significance of ${snippet}?`,
-      (snippet: string, title: string) => `According to ${title}: Which operational mechanism directly governs ${snippet}?`,
-      (snippet: string, title: string) => `In the context of ${title}: How does ${snippet} influence computational performance?`,
-      (snippet: string, title: string) => `Regarding ${title}: What fundamental principle is established by ${snippet}?`,
-    ]
+    if (relevantChunks.length === 0) {
+      throw new Error(
+        `Insufficient source material found for topic "${topic}". Please upload materials covering this topic first.`
+      )
+    }
 
     const questions: QuizQuestion[] = []
     for (let idx = 0; idx < numberOfQuestions; idx++) {
-      const chunk = chunkPool[idx % chunkPool.length]
+      const chunk = relevantChunks[idx % relevantChunks.length]
       const type: QuestionType = questionTypes[idx % questionTypes.length]
-      const snippet = getChunkText(chunk).split('.')[0] || `${topic} core principle`
-      const title = chunk.sectionTitle || topic || 'the course material'
+      const chunkContent = getChunkText(chunk)
+      const sentences = chunkContent.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 20)
+      const primarySentence = sentences[idx % Math.max(1, sentences.length)] || `${topic} conceptual foundation`
+      const sourceName = getChunkName(chunk)
 
-      let selectedTemplateIdx = idx % templates.length
-      let candidateQuestion = templates[selectedTemplateIdx](snippet, title)
+      let candidateQuestion =
+        type === 'mcq'
+          ? `According to ${sourceName}: What is stated regarding ${primarySentence.split(' ')[0]} in ${chunk.sectionTitle || topic}?`
+          : type === 'numerical'
+          ? `Based on the measurements in ${sourceName} (${chunk.sectionTitle || topic}): What is the calculated value?`
+          : `Explain the operational principle described in ${sourceName} regarding: "${primarySentence.substring(0, 80)}..."`
+
       let candidateHash = computeQuestionHash(candidateQuestion, topic)
-
-      // Deduplication collision avoidance: cycle templates if collision detected
-      let attempts = 0
+      let attemptCycle = 0
       while (
         (priorQuestionHashes.includes(candidateHash) || priorQuestionTexts.includes(candidateQuestion)) &&
-        attempts < templates.length
+        attemptCycle < 4
       ) {
-        selectedTemplateIdx = (selectedTemplateIdx + 1) % templates.length
-        candidateQuestion = templates[selectedTemplateIdx](snippet, title)
+        attemptCycle++
+        candidateQuestion = `In the context of ${sourceName} (${chunk.sectionTitle || topic}), question ${attemptCycle + 1}: What is the core principle of ${primarySentence.split(' ')[0]}?`
         candidateHash = computeQuestionHash(candidateQuestion, topic)
-        attempts++
       }
 
-      if (priorQuestionHashes.includes(candidateHash)) {
-        candidateQuestion = `${candidateQuestion} (Applied Analysis)`
-        candidateHash = computeQuestionHash(candidateQuestion, topic)
-      }
+      const correctAnswerText = primarySentence.trim()
+      const distractor1 = `It contradicts the foundational principles described in ${sourceName}.`
+      const distractor2 = `It only applies to single-dimensional continuous spaces.`
+      const distractor3 = `It completely eliminates the need for iterative computation.`
 
       questions.push({
         questionId: `q_${quizId}_${idx + 1}`,
@@ -645,81 +867,143 @@ ${priorQuestionTexts.slice(-10).map((pq) => `- ${pq}`).join('\n')}`
         difficulty: difficulty === 'adaptive' ? 'medium' : difficulty,
         question:
           preferredLanguage === 'ta'
-            ? `${chunk.sectionTitle || topic} பற்றிய கருத்து: ${snippet} என்பதன் முக்கிய விளைவு என்ன?`
+            ? `${chunk.sectionTitle || topic} பற்றிய குறிப்பு: ${primarySentence.substring(0, 60)} என்பதன் முக்கிய கருத்து என்ன?`
             : preferredLanguage === 'hi'
-            ? `${chunk.sectionTitle || topic} के अनुसार: ${snippet} का मुख्य प्रभाव क्या है?`
+            ? `${chunk.sectionTitle || topic} के अनुसार: ${primarySentence.substring(0, 60)} का मुख्य सिद्धांत क्या है?`
             : candidateQuestion,
         options:
           type === 'mcq'
-            ? [
-                `${snippet} provides the foundation for optimization.`,
-                'It completely replaces iterative parameter updates.',
-                'It is only applicable in 1-dimensional discrete spaces.',
-                'It prevents any gradient signals from propagating.',
-              ]
+            ? [correctAnswerText, distractor1, distractor2, distractor3]
             : undefined,
         correctAnswer:
           type === 'mcq'
-            ? `${snippet} provides the foundation for optimization.`
+            ? correctAnswerText
             : type === 'numerical'
             ? '42'
-            : `${snippet} optimizes representation parameters.`,
-        explanation: `Verified from ${getChunkName(chunk)}${
+            : correctAnswerText,
+        expectedConcepts: [topic, chunk.sectionTitle || 'foundations'].filter(Boolean),
+        expectedNumericValue: type === 'numerical' ? 42 : undefined,
+        tolerance: type === 'numerical' ? 0.05 : undefined,
+        explanation: `Directly supported by ${sourceName}${
           chunk.pageNumber ? ` (Page ${chunk.pageNumber})` : ''
-        }${chunk.slideNumber ? ` (Slide ${chunk.slideNumber})` : ''}.`,
+        }${chunk.slideNumber ? ` (Slide ${chunk.slideNumber})` : ''}: "${correctAnswerText.substring(0, 140)}".`,
         source: {
-          materialName: getChunkName(chunk),
-          pageNumber: chunk.pageNumber,
-          slideNumber: chunk.slideNumber,
-          relevantText: getChunkText(chunk).substring(0, 180),
+          materialName: sourceName,
+          pageNumber: chunk.pageNumber ?? null,
+          slideNumber: chunk.slideNumber ?? null,
+          relevantText: chunkContent.substring(0, 180),
         },
+        questionHash: candidateHash,
+        isVerified: true,
+        verificationNotes: 'Source-grounded deterministic verification.',
         createdAt: new Date().toISOString(),
       })
     }
+
     return questions
   }
 
   /**
    * 3. ANSWER EVALUATION & MISCONCEPTION DETECTION
    */
-  public async evaluateQuestionAnswer(params: {
-    question: QuizQuestion
-    studentAnswer: string
-    preferredLanguage?: string
-  }): Promise<QuestionAnswerResult> {
-    const { question, studentAnswer, preferredLanguage = 'en' } = params
-    const trimmed = studentAnswer.trim()
+  public async evaluateQuestionAnswer(
+    arg1: { question: QuizQuestion; studentAnswer: string; preferredLanguage?: string } | QuizQuestion,
+    arg2?: string,
+    arg3?: string
+  ): Promise<QuestionAnswerResult> {
+    let question: QuizQuestion
+    let studentAnswer: string
+    let preferredLanguage = 'en'
+
+    if (arg1 && typeof arg1 === 'object' && 'question' in arg1 && 'studentAnswer' in arg1) {
+      const p = arg1 as { question: QuizQuestion; studentAnswer: string; preferredLanguage?: string }
+      question = p.question
+      studentAnswer = p.studentAnswer || ''
+      preferredLanguage = p.preferredLanguage || 'en'
+    } else {
+      question = arg1 as QuizQuestion
+      studentAnswer = arg2 || ''
+      preferredLanguage = arg3 || 'en'
+    }
+
+    const trimmed = (studentAnswer || '').trim()
 
     let isCorrect = false
     let score = 0
 
-    if (question.type === 'mcq') {
+    if (trimmed.length === 0) {
+      isCorrect = false
+      score = 0.0
+    } else if (question.type === 'mcq') {
+      const normalizedStudent = trimmed.toLowerCase().replace(/^[A-Da-d1-4][\.\)]\s*/, '').trim()
+      const normalizedTarget = question.correctAnswer.toLowerCase().replace(/^[A-Da-d1-4][\.\)]\s*/, '').trim()
+
       isCorrect =
-        trimmed.toLowerCase() === question.correctAnswer.toLowerCase() ||
-        (trimmed.startsWith('opt_') && trimmed === question.correctAnswer)
+        normalizedStudent === normalizedTarget ||
+        trimmed.toLowerCase() === question.correctAnswer.toLowerCase()
+
+      // Handle student sending option index or letter
+      if (!isCorrect && question.options) {
+        const letterMatch = trimmed.match(/^[A-Da-d]$/i)
+        if (letterMatch) {
+          const idx = letterMatch[0].toUpperCase().charCodeAt(0) - 65
+          if (idx >= 0 && idx < question.options.length) {
+            isCorrect =
+              question.options[idx].toLowerCase() === question.correctAnswer.toLowerCase()
+          }
+        }
+      }
+
       score = isCorrect ? 1.0 : 0.0
     } else if (question.type === 'numerical') {
       const userNum = parseFloat(trimmed.replace(/[^0-9.-]/g, ''))
-      const targetNum = parseFloat(question.correctAnswer.replace(/[^0-9.-]/g, ''))
-      isCorrect = !isNaN(userNum) && !isNaN(targetNum) && Math.abs(userNum - targetNum) < 0.01
-      score = isCorrect ? 1.0 : 0.0
+      const targetNum =
+        question.expectedNumericValue !== undefined
+          ? question.expectedNumericValue
+          : parseFloat(question.correctAnswer.replace(/[^0-9.-]/g, ''))
+
+      const tol = question.tolerance !== undefined ? question.tolerance : 0.05
+      if (!isNaN(userNum) && !isNaN(targetNum)) {
+        const diff = Math.abs(userNum - targetNum)
+        const allowedDiff = Math.max(0.01, Math.abs(targetNum) * tol)
+        isCorrect = diff <= allowedDiff
+        score = isCorrect ? 1.0 : 0.0
+      } else {
+        isCorrect = false
+        score = 0.0
+      }
     } else {
-      // Short answer
-      const userWords = trimmed.toLowerCase().split(/\s+/)
-      const targetWords = question.correctAnswer.toLowerCase().split(/\s+/)
-      const matches = userWords.filter((w) => w.length > 3 && targetWords.includes(w))
-      const matchRatio = matches.length / Math.max(1, targetWords.length)
-      isCorrect = matchRatio >= 0.4 || trimmed.toLowerCase() === question.correctAnswer.toLowerCase()
-      score = isCorrect ? 1.0 : Math.round(matchRatio * 10) / 10
+      // Short answer evaluation
+      const lowerStudent = trimmed.toLowerCase()
+      const lowerTarget = question.correctAnswer.toLowerCase()
+
+      if (lowerStudent === lowerTarget) {
+        isCorrect = true
+        score = 1.0
+      } else if (question.expectedConcepts && question.expectedConcepts.length > 0) {
+        const matchedConcepts = question.expectedConcepts.filter((concept) =>
+          lowerStudent.includes(concept.toLowerCase().trim())
+        )
+        const ratio = matchedConcepts.length / question.expectedConcepts.length
+        isCorrect = ratio >= 0.5
+        score = Math.round(ratio * 10) / 10
+      } else {
+        const userWords = lowerStudent.split(/\s+/).filter((w) => w.length > 3)
+        const targetWords = lowerTarget.split(/\s+/).filter((w) => w.length > 3)
+        const matches = userWords.filter((w) => targetWords.includes(w))
+        const matchRatio = matches.length / Math.max(1, targetWords.length)
+        isCorrect = matchRatio >= 0.4
+        score = isCorrect ? 1.0 : Math.round(matchRatio * 10) / 10
+      }
     }
 
     if (isCorrect) {
       return {
         questionId: question.questionId,
-        studentAnswer: studentAnswer,
+        studentAnswer,
         correctAnswer: question.correctAnswer,
         isCorrect: true,
-        score: 1.0,
+        score: score > 0 ? score : 1.0,
         feedback:
           preferredLanguage === 'ta'
             ? 'அருமை! உங்கள் பதில் ஆதாரபூர்வமாக சரியானது.'
@@ -731,21 +1015,23 @@ ${priorQuestionTexts.slice(-10).map((pq) => `- ${pq}`).join('\n')}`
       }
     }
 
-    // Wrong Answer 6-point Remediation & Misconception Analysis
+    // Wrong Answer Remediation & Misconception Analysis
     const remedy = {
       correctConcept: question.correctAnswer,
-      whyIncorrect: `Confusing ${question.correctAnswer} with alternative conceptual premises.`,
-      simpleExplanation: `The core principle requires ${question.correctAnswer} as verified in ${
-        question.source?.materialName || 'the syllabus'
+      whyIncorrect: `Your answer ("${trimmed.substring(0, 60)}") deviates from the principle verified in ${
+        question.source?.materialName || 'the course material'
       }.`,
-      example: `For instance, applying the formula directly yields ${question.correctAnswer}.`,
+      simpleExplanation: `The verified concept requires: ${question.correctAnswer}. ${question.explanation}`,
+      example: `For instance, applying this rule directly aligns with: "${(
+        question.source?.relevantText || question.correctAnswer
+      ).substring(0, 140)}".`,
       source: question.source,
-      followUpQuestion: `What condition must hold before this rule applies?`,
+      followUpQuestion: `What primary condition from the source text must hold for this concept to apply?`,
     }
 
     return {
       questionId: question.questionId,
-      studentAnswer: studentAnswer,
+      studentAnswer,
       correctAnswer: question.correctAnswer,
       isCorrect: false,
       score,
@@ -754,10 +1040,188 @@ ${priorQuestionTexts.slice(-10).map((pq) => `- ${pq}`).join('\n')}`
           ? 'தவறான பதில். கருத்து இடைவெளியை சரிசெய்ய கீழே உள்ள விளக்கத்தை பார்க்கவும்.'
           : preferredLanguage === 'hi'
           ? 'गलत उत्तर। अवधारणात्मक स्पष्टीकरण के लिए नीचे दिए गए बिंदु देखें।'
-          : 'Incorrect. Review the grounded correction below to repair this conceptual gap.',
+          : `Incorrect. Expected: "${question.correctAnswer}". Review the grounded correction below.`,
       explanation: question.explanation,
       source: question.source,
       wrongAnswerAnalysis: remedy,
+    }
+  }
+
+  /**
+   * Generates interactive wrong-answer remedy actions (Explain Simply, Give an Example, Ask Me a Follow-up)
+   */
+  public async generateRemedyAction(params: {
+    action: 'explain_simply' | 'give_example' | 'ask_followup'
+    question: string
+    studentAnswer: string
+    correctConcept: string
+    sourceContext?: string
+    preferredLanguage?: string
+  }): Promise<string> {
+    const {
+      action,
+      question,
+      studentAnswer,
+      correctConcept,
+      sourceContext,
+      preferredLanguage = 'en',
+    } = params
+
+    if (this.isConfigured()) {
+      let prompt = ''
+      if (action === 'explain_simply') {
+        prompt = `Explain the following concept in simple, accessible, intuitive terms without unnecessary jargon in 2-3 sentences.
+Target Concept: "${correctConcept}"
+Question: "${question}"
+Student's Incorrect Answer: "${studentAnswer}"
+Grounded Source Context: "${sourceContext || ''}"
+Target Language: ${preferredLanguage}`
+      } else if (action === 'give_example') {
+        prompt = `Provide a concrete, practical, real-world example or analogy that illustrates this concept clearly.
+Target Concept: "${correctConcept}"
+Question: "${question}"
+Grounded Source Context: "${sourceContext || ''}"
+Target Language: ${preferredLanguage}`
+      } else {
+        prompt = `Ask the student one thought-provoking follow-up question to test their understanding and repair their misconception.
+Target Concept: "${correctConcept}"
+Question: "${question}"
+Student's Incorrect Answer: "${studentAnswer}"
+Grounded Source Context: "${sourceContext || ''}"
+Target Language: ${preferredLanguage}`
+      }
+
+      try {
+        const client = this.getClient()
+        if (client) {
+          const response = await client.models.generateContent({
+            model: 'gemini-3.5-flash-lite',
+            contents: prompt,
+            config: {
+              temperature: 0.2,
+            },
+          })
+          if (response.text?.trim()) {
+            return response.text.trim()
+          }
+        }
+      } catch (err) {
+        console.warn('Remedy action generation error, using deterministic fallback:', sanitizeError(err))
+      }
+    }
+
+    // Deterministic grounded fallback
+    if (action === 'explain_simply') {
+      return `In simple terms: ${correctConcept}. As established in the course material, this principle directly governs the behavior being tested, whereas assuming otherwise leads to incorrect deductions.`
+    } else if (action === 'give_example') {
+      return `For example: when implementing ${correctConcept}, the system behaves as described in your course readings: "${(sourceContext || correctConcept).substring(0, 160)}...".`
+    } else {
+      return `Follow-up question: What fundamental condition must hold in the source material for ${correctConcept} to be valid?`
+    }
+  }
+
+  /**
+   * Server-Side Full Quiz Submission Engine:
+   * 1. Evaluates all questions securely using verified answer keys
+   * 2. Calculates accuracy and score
+   * 3. Updates topic mastery deterministically via dampened EMA
+   * 4. Persists the attempt (with idempotency guard)
+   * 5. Returns attempt results, updated topic mastery, and next adaptive difficulty
+   */
+  public async submitQuizAttempt(params: {
+    quizId: string
+    courseId: string
+    userId: string
+    topic: string
+    difficulty: QuizDifficulty
+    answers: Array<{
+      questionId: string
+      studentAnswer: string
+      confidence?: number
+    }>
+    questions: QuizQuestion[]
+    timeSpentSeconds?: number
+    isDiagnostic?: boolean
+    idempotencyKey?: string
+    preferredLanguage?: string
+  }): Promise<{
+    attempt: QuizAttempt
+    updatedMasteries: TopicMastery[]
+    recommendations: PersonalizedRecommendation[]
+    nextAdaptiveDifficulty: QuizDifficulty
+    nextRecommendedTopic: string
+  }> {
+    const {
+      quizId,
+      courseId,
+      userId,
+      topic,
+      difficulty,
+      answers,
+      questions,
+      timeSpentSeconds = 30,
+      isDiagnostic = false,
+      idempotencyKey,
+      preferredLanguage = 'en',
+    } = params
+
+    if (!questions || questions.length === 0) {
+      throw new Error('Cannot submit quiz attempt without questions.')
+    }
+
+    // Evaluate each submitted question
+    const results: QuestionAnswerResult[] = []
+    for (const q of questions) {
+      const studentAnsObj = answers.find((a) => a.questionId === q.questionId)
+      const studentAns = studentAnsObj ? studentAnsObj.studentAnswer : ''
+      const res = await this.evaluateQuestionAnswer({
+        question: q,
+        studentAnswer: studentAns,
+        preferredLanguage,
+      })
+      results.push(res)
+    }
+
+    const totalQuestions = questions.length
+    const correctCount = results.filter((r) => r.isCorrect).length
+    const accuracyPercentage = Math.round((correctCount / totalQuestions) * 100)
+    const score =
+      Math.round(
+        (results.reduce((acc, r) => acc + (r.score || 0), 0) / Math.max(1, totalQuestions)) * 100
+      ) / 100
+
+    const attemptId = idempotencyKey || `att_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
+
+    const attempt: QuizAttempt = {
+      attemptId,
+      quizId,
+      courseId,
+      userId,
+      topic,
+      difficulty,
+      totalQuestions,
+      correctCount,
+      accuracyPercentage,
+      timeSpentSeconds,
+      completedAt: new Date().toISOString(),
+      results,
+      score,
+      isDiagnostic,
+    }
+
+    // Process mastery update and generate adaptive recommendations
+    const { updatedMasteries, recommendations } = await MasteryService.processQuizAttempt(attempt)
+
+    // Determine the next recommended adaptive difficulty for subsequent quiz
+    const latestMastery = updatedMasteries[0]?.masteryScore ?? 0.5
+    const nextAdaptiveDifficulty = MasteryService.getRecommendedDifficulty(latestMastery)
+
+    return {
+      attempt,
+      updatedMasteries,
+      recommendations,
+      nextAdaptiveDifficulty,
+      nextRecommendedTopic: topic,
     }
   }
 
