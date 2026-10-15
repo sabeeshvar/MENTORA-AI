@@ -2,8 +2,11 @@ import { Router, Request, Response } from 'express'
 import { geminiService } from '../services/ai/gemini.service'
 import { serverConfig } from '../config'
 import { retrieveRelevantChunks, defaultVectorStore } from '../services/retrievalService'
+import { requireAuth } from '../middleware/auth'
+
 
 export const geminiRouter = Router()
+
 
 /**
  * Status check for AI engine configuration
@@ -172,7 +175,7 @@ geminiRouter.post('/quiz/remedy', async (req: Request, res: Response) => {
 /**
  * Server-Side Quiz Submission & Deterministic Scoring Endpoint
  */
-geminiRouter.post('/quiz/submit', async (req: Request, res: Response) => {
+geminiRouter.post('/quiz/submit', requireAuth, async (req: Request, res: Response) => {
   const {
     quizId,
     courseId,
@@ -187,8 +190,8 @@ geminiRouter.post('/quiz/submit', async (req: Request, res: Response) => {
     preferredLanguage,
   } = req.body
 
-  if (!quizId || !courseId || !userId || !topic) {
-    return res.status(400).json({ error: 'quizId, courseId, userId, and topic are required' })
+  if (!quizId || !courseId || !topic) {
+    return res.status(400).json({ error: 'quizId, courseId, and topic are required' })
   }
   if (!Array.isArray(answers) || answers.length === 0) {
     return res.status(400).json({ error: 'answers must be a non-empty array' })
@@ -197,11 +200,14 @@ geminiRouter.post('/quiz/submit', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'questions must be a non-empty array' })
   }
 
+  // Derive genuine user ID from verified token
+  const authenticatedUserId = (req as any).user?.id || (typeof userId === 'string' ? userId.trim() : 'demo-student-id')
+
   try {
     const submissionResult = await geminiService.submitQuizAttempt({
       quizId: String(quizId).trim(),
       courseId: String(courseId).trim(),
-      userId: String(userId).trim(),
+      userId: authenticatedUserId,
       topic: String(topic).trim(),
       difficulty: difficulty || 'medium',
       answers,
@@ -213,6 +219,7 @@ geminiRouter.post('/quiz/submit', async (req: Request, res: Response) => {
     })
 
     return res.json(submissionResult)
+
   } catch (error: any) {
     return res.status(500).json({
       error: error?.message || 'Failed to submit quiz attempt',

@@ -7,7 +7,8 @@ import type {
 } from '@/types/quiz'
 import type { ProcessedChunk } from '@/types/chunk'
 import type { TopicMastery, PersonalizedRecommendation } from '@/types/mastery'
-import { getApiEndpoint } from './apiConfig'
+import { getApiEndpoint, getAuthHeaders } from './apiConfig'
+
 
 const getEndpoint = (path: string) => getApiEndpoint(`/api/ai${path}`)
 
@@ -116,11 +117,13 @@ export const evaluateQuizAnswerApi = async (
 export const submitQuizAttemptApi = async (
   params: SubmitQuizAttemptParams
 ): Promise<SubmitQuizAttemptApiResponse> => {
+  const headers = await getAuthHeaders()
   const res = await fetch(getEndpoint('/quiz/submit'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(params),
   })
+
 
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}))

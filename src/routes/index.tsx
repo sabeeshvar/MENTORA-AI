@@ -5,6 +5,7 @@ import { LandingPage } from '@/pages/LandingPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
+import { AuthCallbackPage } from '@/pages/AuthCallbackPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { MaterialsPage } from '@/pages/MaterialsPage'
 import { CourseDetailPage } from '@/pages/CourseDetailPage'
@@ -36,11 +37,16 @@ export const router = createBrowserRouter([
     element: <ForgotPasswordPage />,
   },
   {
+    path: '/auth/callback',
+    element: <AuthCallbackPage />,
+  },
+  {
     element: (
       <ProtectedRoute>
         <AppLayout />
       </ProtectedRoute>
     ),
+
     children: [
       {
         path: '/dashboard',

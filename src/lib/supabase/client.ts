@@ -5,17 +5,17 @@ let supabaseInstance: SupabaseClient | null = null
 
 /**
  * Returns the singleton centralized Supabase client.
- * Validates configuration and raises a clear descriptive error when keys are missing.
+ * Validates configuration and raises a clear descriptive warning when keys are missing.
  */
 export const getSupabaseClient = (): SupabaseClient => {
   if (!supabaseInstance) {
     if (!isSupabaseConfigured()) {
-      console.error(
-        '[MENTORA AI] ⚠️ Supabase environment variables are missing or incomplete!\n' +
+      console.warn(
+        '[MENTORA AI] ⚠️ Supabase environment variables are missing, incomplete, or unconfigured.\n' +
         'Please ensure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are defined in your .env file.\n' +
         'Example:\n' +
         '  VITE_SUPABASE_URL=https://your-project.supabase.co\n' +
-        '  VITE_SUPABASE_ANON_KEY=your_supabase_anon_key'
+        '  VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
       )
     }
 
@@ -24,6 +24,7 @@ export const getSupabaseClient = (): SupabaseClient => {
 
     supabaseInstance = createClient(effectiveUrl, effectiveKey, {
       auth: {
+        flowType: 'pkce',
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
@@ -33,4 +34,12 @@ export const getSupabaseClient = (): SupabaseClient => {
   return supabaseInstance
 }
 
+/**
+ * Resets the Supabase client instance (used by test suites)
+ */
+export const resetSupabaseClientForTesting = (): void => {
+  supabaseInstance = null
+}
+
 export const supabase = getSupabaseClient()
+

@@ -52,7 +52,10 @@ async function runRouteSmokeTest() {
     // 4. Test /api/ai/quiz/submit -> Verify server-side evaluation & submission
     const submitRes = await fetch(`http://localhost:${port}/api/ai/quiz/submit`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer demo-bearer-token',
+      },
       body: JSON.stringify({
         quizId: 'q_smoke_1',
         courseId: 'crs_smoke',

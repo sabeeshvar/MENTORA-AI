@@ -18,6 +18,7 @@ export interface UserProfile {
   learningStats: LearningStats
   displayName?: string | null
   preferredLanguage?: string
+  emailConfirmationRequired?: boolean
 }
 
 export interface AuthState {
@@ -25,4 +26,5 @@ export interface AuthState {
   loading: boolean
   error: string | null
 }
+
 

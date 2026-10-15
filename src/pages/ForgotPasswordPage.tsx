@@ -24,10 +24,17 @@ export const ForgotPasswordPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+
+    const cleanEmail = email.trim()
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setError('Please enter a valid email address.')
+      return
+    }
+
     setIsLoading(true)
 
     try {
-      await resetPassword(email)
+      await resetPassword(cleanEmail)
       setIsSubmitted(true)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to send password reset email.'
@@ -36,6 +43,7 @@ export const ForgotPasswordPage: React.FC = () => {
       setIsLoading(false)
     }
   }
+
 
   return (
     <div className="min-h-screen bg-[#090D16] flex flex-col justify-center items-center px-4 py-12 relative overflow-hidden">

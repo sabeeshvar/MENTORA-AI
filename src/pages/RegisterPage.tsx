@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate, useLocation, Link } from 'react-router-dom'
-import { BrainCircuit, Mail, Lock, User, ArrowRight, ShieldCheck, AlertCircle } from 'lucide-react'
+import { BrainCircuit, Mail, Lock, User, ArrowRight, ShieldCheck, AlertCircle, CheckCircle2, WifiOff } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
+import { isSupabaseConfigured, checkSupabaseReachability } from '@/lib/supabase/config'
 import { Button } from '@/components/common/Button'
 import { Card } from '@/components/common/Card'
 import { Badge } from '@/components/common/Badge'
@@ -17,6 +18,8 @@ export const RegisterPage: React.FC = () => {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [endpointNotice, setEndpointNotice] = useState<string | null>(null)
+  const [verificationSent, setVerificationSent] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
 
   // Redirect authenticated users away from register page
@@ -26,9 +29,40 @@ export const RegisterPage: React.FC = () => {
     }
   }, [user, authLoading, navigate, from])
 
+  // Probe Supabase connectivity on mount
+  useEffect(() => {
+    let mounted = true
+    if (isSupabaseConfigured()) {
+      checkSupabaseReachability(3000).then((health) => {
+        if (!mounted) return
+        if (!health.reachable && health.isDnsFailure) {
+          setEndpointNotice(
+            `Supabase project endpoint (${health.projectRef}.supabase.co) could not be resolved (DNS NXDOMAIN). If this project is paused, please restore it in your Supabase Dashboard.`
+          )
+        }
+      })
+    }
+    return () => {
+      mounted = false
+    }
+  }, [])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+
+    const cleanEmail = email.trim()
+    const cleanName = name.trim()
+
+    if (!cleanName) {
+      setError('Please enter your full name.')
+      return
+    }
+
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setError('Please provide a valid email address.')
+      return
+    }
 
     if (password !== confirmPassword) {
       setError('Passwords do not match. Please re-enter.')
@@ -43,8 +77,12 @@ export const RegisterPage: React.FC = () => {
     setIsLoading(true)
 
     try {
-      await register(email, password, name)
-      navigate(from, { replace: true })
+      const profile = await register(cleanEmail, password, cleanName)
+      if (profile.emailConfirmationRequired) {
+        setVerificationSent(true)
+      } else {
+        navigate(from, { replace: true })
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Registration failed. Please try again.'
       setError(message)
@@ -56,16 +94,20 @@ export const RegisterPage: React.FC = () => {
   const handleGoogleSignup = async () => {
     setError(null)
     setIsLoading(true)
+    sessionStorage.setItem('mentora_auth_redirect', from)
+
     try {
       await loginWithGoogle()
-      navigate(from, { replace: true })
+      if (!isSupabaseConfigured()) {
+        navigate(from, { replace: true })
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Google sign-up failed'
       setError(message)
-    } finally {
       setIsLoading(false)
     }
   }
+
 
   return (
     <div className="min-h-screen bg-[#090D16] flex flex-col justify-center items-center px-4 py-12 relative overflow-hidden">
@@ -103,14 +145,50 @@ export const RegisterPage: React.FC = () => {
 
         {/* Register Form Card */}
         <Card className="p-8 border-slate-800/80 bg-slate-900/70 backdrop-blur-xl">
-          {error && (
-            <div className="mb-5 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2.5">
-              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-              <span>{error}</span>
+          {endpointNotice && (
+            <div className="mb-5 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-start gap-2.5 leading-relaxed">
+              <WifiOff className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-amber-300">Supabase Connection Notice</p>
+                <p className="mt-0.5 text-amber-200/90">{endpointNotice}</p>
+              </div>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          {verificationSent ? (
+            <div className="text-center py-4 space-y-4">
+              <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center mx-auto">
+                <CheckCircle2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Verification Email Sent</h3>
+                <p className="text-xs text-slate-300 mt-2 leading-relaxed">
+                  We sent a confirmation link to <span className="text-indigo-300 font-semibold">{email}</span>.
+                </p>
+                <p className="text-[11px] text-slate-400 mt-2">
+                  Please click the link in your email to confirm your account, then sign in to access MENTORA AI.
+                </p>
+              </div>
+
+              <div className="pt-4 border-t border-slate-800/80">
+                <Link to="/login">
+                  <Button variant="primary" className="w-full text-xs">
+                    Proceed to Sign In
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <>
+              {error && (
+                <div className="mb-5 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleSubmit} className="space-y-4">
+
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1.5">Full Name</label>
               <div className="relative">
@@ -229,8 +307,11 @@ export const RegisterPage: React.FC = () => {
               </p>
             </div>
           </div>
+          </>
+          )}
         </Card>
       </div>
+
     </div>
   )
 }

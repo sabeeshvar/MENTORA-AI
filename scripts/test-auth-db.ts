@@ -1,23 +1,51 @@
 import 'dotenv/config'
 import { supabase } from '../src/lib/supabase/client'
-import { isSupabaseConfigured, supabaseUrl } from '../src/lib/supabase/config'
+import {
+  isSupabaseConfigured,
+  supabaseUrl,
+  supabaseProjectRef,
+  checkSupabaseReachability,
+} from '../src/lib/supabase/config'
 
 async function testSupabaseAndAuth() {
   console.log('======================================================================')
-  console.log('MENTORA AI — SUPABASE, DATABASE & AUTH CONNECTIVITY TEST')
+  console.log('MENTORA AI — SUPABASE, DATABASE & AUTH CONNECTIVITY DIAGNOSTIC')
   console.log('======================================================================\n')
 
-  console.log(`1. Supabase Configuration Check:`)
+  console.log(`1. Supabase Client Configuration:`)
   console.log(`   Configured: ${isSupabaseConfigured()}`)
+  console.log(`   Project Ref: ${supabaseProjectRef || 'unknown'}`)
   console.log(`   Sanitized Endpoint URL: ${supabaseUrl}`)
 
   if (!isSupabaseConfigured()) {
-    console.error('   ✗ Supabase is not properly configured.')
-    process.exit(1)
+    console.error('   ✗ Supabase is not configured (missing URL or Anon key).')
+    return
   }
-  console.log('   ✓ Supabase configuration verified.\n')
+  console.log('   ✓ Supabase URL & Key format configured.\n')
 
-  console.log('2. Supabase Auth Service Heartbeat:')
+  console.log('2. Live Endpoint DNS & Network Reachability Probe:')
+  const reachability = await checkSupabaseReachability(3500)
+  if (!reachability.reachable) {
+    console.log(`   ✗ Reachability Status: UNREACHABLE`)
+    console.log(`   ✗ Detail: ${reachability.error}`)
+    if (reachability.isDnsFailure) {
+      console.log(`\n   [CRITICAL DIAGNOSIS]`)
+      console.log(`   Hostname ${supabaseProjectRef}.supabase.co does NOT resolve in DNS (NXDOMAIN).`)
+      console.log(`   This occurs when a Supabase project has been paused (after inactivity) or deleted.`)
+      console.log(`   To restore:`)
+      console.log(`     1. Navigate to: https://supabase.com/dashboard/project/${supabaseProjectRef}`)
+      console.log(`     2. Click "Restore project"`)
+      console.log(`     3. Wait 1-2 minutes for Cloudflare DNS propagation.`)
+    }
+    console.log('\n======================================================================')
+    console.log('DIAGNOSTIC COMPLETED — PAUSED/UNREACHABLE PROJECT IDENTIFIED')
+    console.log('======================================================================')
+    return
+  }
+
+  console.log(`   ✓ Endpoint Reachable (HTTP Status: ${reachability.status || 200})\n`)
+
+  console.log('3. Supabase Auth Service Heartbeat:')
   try {
     const { data: sessionData, error: sessionErr } = await supabase.auth.getSession()
     if (sessionErr) {
@@ -30,7 +58,7 @@ async function testSupabaseAndAuth() {
     console.warn(`   Auth ping notice: ${err?.message || err}\n`)
   }
 
-  console.log('3. PostgreSQL Table Access & Schema Inspection:')
+  console.log('4. PostgreSQL Table Access & Schema Inspection:')
   const tables = [
     'profiles',
     'courses',
@@ -45,7 +73,7 @@ async function testSupabaseAndAuth() {
     'recommendations',
     'evaluation_results',
   ]
-  
+
   let accessibleCount = 0
   for (const t of tables) {
     try {
@@ -61,7 +89,7 @@ async function testSupabaseAndAuth() {
     }
   }
 
-  console.log(`\n4. pgvector RPC (match_course_chunks) Inspection:`)
+  console.log(`\n5. pgvector RPC (match_course_chunks) Inspection:`)
   try {
     const dummyEmbedding = new Array(256).fill(0.01)
     const { data: rpcData, error: rpcError, status: rpcStatus } = await supabase.rpc('match_course_chunks', {
@@ -80,7 +108,7 @@ async function testSupabaseAndAuth() {
   }
 
   console.log('\n======================================================================')
-  console.log('SUPABASE & AUTH CONNECTIVITY VERIFIED')
+  console.log('SUPABASE & AUTH CONNECTIVITY DIAGNOSTIC COMPLETE')
   console.log('======================================================================')
 }
 

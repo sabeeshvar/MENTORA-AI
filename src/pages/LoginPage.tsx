@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate, useLocation, Link } from 'react-router-dom'
-import { BrainCircuit, Mail, Lock, ArrowRight, Sparkles, AlertCircle } from 'lucide-react'
+import { BrainCircuit, Mail, Lock, ArrowRight, Sparkles, AlertCircle, WifiOff } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
+import { isSupabaseConfigured, checkSupabaseReachability } from '@/lib/supabase/config'
 import { Button } from '@/components/common/Button'
 import { Card } from '@/components/common/Card'
 
@@ -14,6 +15,7 @@ export const LoginPage: React.FC = () => {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [endpointNotice, setEndpointNotice] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
   // Redirect authenticated users away from the login page
@@ -23,13 +25,42 @@ export const LoginPage: React.FC = () => {
     }
   }, [user, authLoading, navigate, from])
 
+  // Probe Supabase connectivity on mount to provide fast, informative diagnostics
+  useEffect(() => {
+    let mounted = true
+    if (isSupabaseConfigured()) {
+      checkSupabaseReachability(3000).then((health) => {
+        if (!mounted) return
+        if (!health.reachable && health.isDnsFailure) {
+          setEndpointNotice(
+            `Supabase project endpoint (${health.projectRef}.supabase.co) could not be resolved (DNS NXDOMAIN). If this project is paused, please restore it in your Supabase Dashboard. You may also use Hackathon Reviewer Demo access below.`
+          )
+        }
+      })
+    }
+    return () => {
+      mounted = false
+    }
+  }, [])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+
+    const cleanEmail = email.trim()
+    if (!cleanEmail) {
+      setError('Please enter your email address.')
+      return
+    }
+    if (!password) {
+      setError('Please enter your password.')
+      return
+    }
+
     setIsLoading(true)
 
     try {
-      await login(email, password)
+      await login(cleanEmail, password)
       navigate(from, { replace: true })
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Invalid credentials. Please try again.'
@@ -42,13 +73,17 @@ export const LoginPage: React.FC = () => {
   const handleGoogleLogin = async () => {
     setError(null)
     setIsLoading(true)
+    sessionStorage.setItem('mentora_auth_redirect', from)
+
     try {
       await loginWithGoogle()
-      navigate(from, { replace: true })
+      // If we are in demo mode (Supabase unconfigured), login returns without redirecting
+      if (!isSupabaseConfigured()) {
+        navigate(from, { replace: true })
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Google authentication failed'
       setError(message)
-    } finally {
       setIsLoading(false)
     }
   }
@@ -66,6 +101,7 @@ export const LoginPage: React.FC = () => {
       setIsLoading(false)
     }
   }
+
 
   return (
     <div className="min-h-screen bg-[#090D16] flex flex-col justify-center items-center px-4 py-12 relative overflow-hidden">
@@ -119,6 +155,16 @@ export const LoginPage: React.FC = () => {
 
         {/* Login Form Card */}
         <Card className="p-8 border-slate-800/80 bg-slate-900/70 backdrop-blur-xl">
+          {endpointNotice && (
+            <div className="mb-5 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-start gap-2.5 leading-relaxed">
+              <WifiOff className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-amber-300">Supabase Connection Notice</p>
+                <p className="mt-0.5 text-amber-200/90">{endpointNotice}</p>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="mb-5 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2.5">
               <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
@@ -127,6 +173,7 @@ export const LoginPage: React.FC = () => {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
+
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1.5">
                 Email Address

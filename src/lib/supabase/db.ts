@@ -58,31 +58,44 @@ export const safeStorage = {
 
 export const getUserDocument = async (uid: string): Promise<UserProfile | null> => {
   if (!uid) return null
+  const localCache = safeStorage.getItem(`mentora_user_${uid}`)
+
   if (!isSupabaseConfigured()) {
-    const local = safeStorage.getItem(`mentora_user_${uid}`) || safeStorage.getItem('mentora_demo_user')
+    const local = localCache || safeStorage.getItem('mentora_demo_user')
     return local ? JSON.parse(local) : null
   }
 
   try {
     const { data, error } = await supabase.from('profiles').select('*').eq('id', uid).single()
-    if (error || !data) return null
-    return {
-      uid: data.id,
-      name: data.name || data.display_name,
-      email: data.email,
-      photoURL: data.photo_url,
-      role: data.role,
-      createdAt: data.created_at,
-      lastLoginAt: data.updated_at,
-      learningStats: data.learning_stats || defaultLearningStats,
-      displayName: data.display_name || data.name,
-      preferredLanguage: data.preferred_language || 'en',
+    if (!error && data) {
+      const profile: UserProfile = {
+        uid: data.id,
+        name: data.name || data.display_name,
+        email: data.email,
+        photoURL: data.photo_url,
+        role: data.role,
+        createdAt: data.created_at,
+        lastLoginAt: data.updated_at,
+        learningStats: data.learning_stats || defaultLearningStats,
+        displayName: data.display_name || data.name,
+        preferredLanguage: data.preferred_language || 'en',
+      }
+      safeStorage.setItem(`mentora_user_${uid}`, JSON.stringify(profile))
+      return profile
     }
+
+    if (localCache) {
+      return JSON.parse(localCache)
+    }
+    return null
   } catch (err) {
-    console.warn('Error reading profile from Supabase:', err)
+    if (localCache) {
+      return JSON.parse(localCache)
+    }
     return null
   }
 }
+
 
 export const syncUserDocument = async (
   user: { id?: string; uid?: string; email?: string; displayName?: string; user_metadata?: any },
@@ -112,8 +125,10 @@ export const syncUserDocument = async (
     preferredLanguage: lang,
   }
 
-  localStorage.setItem(`mentora_user_${uid}`, JSON.stringify(profile))
-  localStorage.setItem('mentora_demo_user', JSON.stringify(profile))
+  safeStorage.setItem(`mentora_user_${uid}`, JSON.stringify(profile))
+  if (uid.startsWith('demo-') || !isSupabaseConfigured()) {
+    safeStorage.setItem('mentora_demo_user', JSON.stringify(profile))
+  }
 
   if (isSupabaseConfigured()) {
     try {
@@ -133,6 +148,7 @@ export const syncUserDocument = async (
 
   return profile
 }
+
 
 // ==========================================
 // 2. Courses Management
